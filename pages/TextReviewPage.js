@@ -115,6 +115,9 @@ class TextReviewPage {
 
         if (user.photo) {
             console.log(`Starting file upload for: ${user.photo}`);
+            const absolutePath = require('path').resolve(user.photo);
+            console.log(`Resolved absolute path for user photo: ${absolutePath}`);
+
             try {
                 // Force User-Interaction Strategy: Click trigger and wait for file chooser
                 // This ensures the UI events are fired correctly.
@@ -127,7 +130,7 @@ class TextReviewPage {
                 await this.uploadTrigger.click();
 
                 const fileChooser = await fileChooserPromise;
-                await fileChooser.setFiles(user.photo);
+                await fileChooser.setFiles(absolutePath);
 
                 console.log('File chooser handled and files set.');
             } catch (e) {
@@ -142,6 +145,10 @@ class TextReviewPage {
     // Explicit media upload for SCN004
     async uploadMedia(filePath) {
         console.log(`Explicitly uploading media: ${filePath}`);
+        // Ensure absolute path
+        const absolutePath = require('path').resolve(filePath);
+        console.log(`Resolved absolute path: ${absolutePath}`);
+
         try {
             // Ensure trigger is visible before clicking
             // SCN004 uses the 'span' locator specifically
@@ -152,7 +159,7 @@ class TextReviewPage {
             await trigger.click();
 
             const fileChooser = await fileChooserPromise;
-            await fileChooser.setFiles(filePath);
+            await fileChooser.setFiles(absolutePath);
 
             console.log('Media file uploaded successfully.');
         } catch (e) {
