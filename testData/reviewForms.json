@@ -1,0 +1,213 @@
+{
+    "textReviewScenarios": [
+        {
+            "scenarioId": "SCN001",
+            "description": "Submit valid text review with all mandatory fields",
+            "url": "https://www.feedspace.io/u/UxNPq3Q",
+            "type": "successValidation",
+            "reviewText": "Great service!",
+            "user": {
+                "name": "John Doe",
+                "contact": "1234567890",
+                "photo": "C:\\Playwright\\Playwright-BDDCucumber-POM-15.01-External Testing\\media\\sample_image.jpg"
+            },
+            "expected": {
+                "successMessage": "Your testimonial has been successfully submitted."
+            }
+        },
+        {
+            "scenarioId": "SCN002",
+            "description": "Submit text review without filling mandatory fields",
+            "url": "https://www.feedspace.io/u/rKFpbpu",
+            "type": "mandatoryFieldsValidation",
+            "reviewText": "Great service!- Mandatory field validation",
+            "user": {
+                "name": "",
+                "contact": "",
+                "photo": ""
+            },
+            "expected": {
+                "validationErrors": [
+                    "Please upload a photo.",
+                    "This field is required.",
+                    "This field is required."
+                ]
+            }
+        },
+        {
+            "scenarioId": "SCN003",
+            "description": "Access inactive form",
+            "url": "https://www.feedspace.io/u/8XxUrGG",
+            "type": "inactiveForm",
+            "user": {},
+            "expected": {
+                "inactiveMessage": "This form is not currently accepting reviews."
+            }
+        },
+        {
+            "scenarioId": "SCN004",
+            "description": "Submit text review with media upload",
+            "url": "https://www.feedspace.io/u/2nL5ykR",
+            "type": "mediaUploadValidation",
+            "reviewText": "Media uploaded",
+            "mediaPhoto": "C:\\Playwright\\Playwright-BDDCucumber-POM-15.01-External Testing\\media\\sample_image1.jpg",
+            "user": {
+                "name": "Lucy David",
+                "contact": "1234567890"
+            },
+            "expected": {
+                "successMessage": "Your testimonial has been submitted successfully."
+            }
+        },
+        {
+            "scenarioId": "SCN005",
+            "description": "Validate Thank You page UI elements after submission",
+            "url": "https://www.feedspace.io/u/SMJrdJZ",
+            "type": "thankYouPageValidation",
+            "reviewText": "Thank you -Great service!",
+            "user": {
+                "name": "John Doe",
+                "contact": "1234567890"
+            },
+            "expected": {
+                "thankYouPage": {
+                    "headerText": "Thank You!",
+                    "descriptionText": "Your feedback has been successfully submitted. Thank you for sharing!",
+                    "shareLink": {
+                        "shouldHaveValue": true
+                    },
+                    "platformButtons": {
+                        "selector": ".feedspace-platform-buttons",
+                        "shouldHaveValue": true
+                    },
+                    "socialIcons": [
+                        "WhatsApp",
+                        "X",
+                        "LinkedIn",
+                        "Facebook"
+                    ],
+                    "signupButtonText": "Got it, let's signup"
+                }
+            }
+        },
+        {
+            "scenarioId": "SCN006",
+            "description": "Submit review with valid video upload less than 1 minute",
+            "url": "https://www.feedspace.io/u/d3lg09l",
+            "type": "mediaVideoValidation",
+            "media": {
+                "fileType": "video",
+                "filePath": "C:\\Playwright\\Playwright-BDDCucumber-POM-15.01-External Testing\\media\\valid_video.mp4"
+            },
+            "user": {
+                "name": "John Doe",
+                "contact": "1234567890"
+            },
+            "expected": {
+                "successMessage": "Your testimonial has been successfully submitted."
+            }
+        },
+        {
+            "scenarioId": "SCN007",
+            "description": "Upload video longer than 1 minute",
+            "url": "https://www.feedspace.io/u/d3lg09l",
+            "type": "mediaVideoValidation",
+            "media": {
+                "fileType": "video",
+                "filePath": "C:\\Playwright\\Playwright-BDDCucumber-POM-15.01-External Testing\\media\\long_video.mp4"
+            },
+            "user": {
+                "name": "John Doe",
+                "contact": "1234567890"
+            },
+            "expected": {
+                "errorMessage": "Video length should be less than 1 minutes"
+            }
+        },
+        {
+            "scenarioId": "SCN008",
+            "description": "Upload image file instead of video",
+            "url": "https://www.feedspace.io/u/d3lg09l",
+            "type": "mediaVideoValidation",
+            "reviewText": "Testing image upload",
+            "media": {
+                "fileType": "image",
+                "filePath": "C:\\Playwright\\Playwright-BDDCucumber-POM-15.01-External Testing\\media\\sample_image.jpg"
+            },
+            "user": {
+                "name": "John Doe",
+                "contact": "1234567890"
+            },
+            "expected": {
+                "fileTypeErrorMessage": "File format not supported!"
+            }
+        },
+        {
+            "scenarioId": "SCN009",
+            "description": "Upload audio file instead of video",
+            "url": "https://www.feedspace.io/u/d3lg09l",
+            "type": "mediaVideoValidation",
+            "reviewText": "Testing audio upload",
+            "media": {
+                "fileType": "audio",
+                "filePath": "C:\\Playwright\\Playwright-BDDCucumber-POM-15.01-External Testing\\media\\audio.mp3"
+            },
+            "user": {
+                "name": "John Doe",
+                "contact": "1234567890"
+            },
+            "expected": {
+                "fileTypeErrorMessage": "File format not supported!"
+            }
+        },
+        {
+            "scenarioId": "SCN010",
+            "description": "Upload valid audio file",
+            "url": "https://www.feedspace.io/u/4hVNHDZ",
+            "type": "mediaAudioValidation",
+            "reviewText": "Testing audio upload",
+            "media": {
+                "fileType": "audio",
+                "filePath": "C:\\Playwright\\Playwright-BDDCucumber-POM-15.01-External Testing\\media\\audio.mp3"
+            },
+            "user": {
+                "name": "David Doe",
+                "contact": "1234567890"
+            },
+            "expected": {
+                "successMessage": "Your audio testimonial has been submitted successfully. We truly appreciate your feedback."
+            }
+        }
+    ],
+    "wallOfLovePage": {
+        "url": "https://www.feedspace.io/w/vDESlxZ9I1",
+        "page": {
+            "titleRequired": true,
+            "headingRequired": true
+        },
+        "reviews": {
+            "minCount": 1,
+            "contentRequired": {
+                "anyOf": [
+                    "text",
+                    "image",
+                    "video"
+                ]
+            }
+        },
+        "optionalElements": {
+            "feedspaceBranding": {
+                "selector": ".feedspace-brand-badge-wrap.feedspace-brand-info",
+                "validateRedirectIfPresent": true,
+                "redirectContains": "feedspace.io"
+            },
+            "platformIcon": {
+                "required": false,
+                "validateRedirectIfPresent": false
+            },
+            "carousel": {
+                "required": false
+            }
+        }
+    }
+}
