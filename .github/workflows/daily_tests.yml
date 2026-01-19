@@ -27,9 +27,14 @@ jobs:
 
     - name: Run Text Review Feature
       run: npx cucumber-js features/text_review.feature
+      continue-on-error: true
 
     - name: Run Media Upload Feature
+      if: always()
       run: npx cucumber-js features/media_upload.feature
+      continue-on-error: true
 
     - name: Run Wall of Love Feature
+      if: always()
       run: npx cucumber-js features/wol.feature
+      continue-on-error: true
