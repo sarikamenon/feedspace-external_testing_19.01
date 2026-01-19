@@ -1,0 +1,35 @@
+name: Daily Automated Tests
+
+on:
+  schedule:
+    # Runs at 09:00 AM user time (+04:00) -> 05:00 UTC
+    - cron: '0 5 * * *'
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  run-tests:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Install Playwright Browsers
+      run: npx playwright install --with-deps
+
+    - name: Run Text Review Feature
+      run: npx cucumber-js features/text_review.feature
+
+    - name: Run Media Upload Feature
+      run: npx cucumber-js features/media_upload.feature
+
+    - name: Run Wall of Love Feature
+      run: npx cucumber-js features/wol.feature

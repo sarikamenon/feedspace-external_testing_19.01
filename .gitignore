@@ -12,7 +12,7 @@ final_verification.log
 
 # Reports
 *.html
-*.json
+
 
 # Environment files
 .env
