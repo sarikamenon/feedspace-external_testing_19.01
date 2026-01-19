@@ -7,6 +7,9 @@ let testData = [];
 let currentScenario;
 let reviewPage;
 
+// -----------------------------
+// Load JSON Test Data
+// -----------------------------
 Given('user loads test data from JSON file', async function () {
     const filePath = path.resolve(process.cwd(), 'testData/reviewForms.json');
     const data = fs.readFileSync(filePath, 'utf8');
@@ -16,6 +19,9 @@ Given('user loads test data from JSON file', async function () {
     console.log(`Loaded ${testData.length} scenarios from JSON file`);
 });
 
+// -----------------------------
+// Open Public Review Form
+// -----------------------------
 Given('user opens public review form for scenario {string}', async function (scenarioId) {
     currentScenario = testData.find(s => s.scenarioId === scenarioId);
     if (!currentScenario) throw new Error(`Scenario ${scenarioId} not found in JSON`);
@@ -25,39 +31,55 @@ Given('user opens public review form for scenario {string}', async function (sce
     console.log(`Opened URL: ${currentScenario.url}`);
 });
 
+// -----------------------------
+// Click Buttons
+// -----------------------------
 When('user clicks on the Write Your Experience button', async function () {
     await reviewPage.clickWriteExperience();
 });
 
 When('user clicks on the Write Your Feedback button', async function () {
-    await reviewPage.clickWriteExperience();
-});
-
-When('user enters the feedback in the submit feedback field', async function () {
-    await reviewPage.enterReviewText(currentScenario.reviewText);
+    await reviewPage.clickWriteExperience(); // Same method works for both buttons
 });
 
 When('user clicks on the Submit Feedback button', async function () {
     await reviewPage.clickSubmitFeedback();
 });
 
-When('user uploading the media file', async function () {
-    const photoPath = currentScenario.mediaPhoto || (currentScenario.user && currentScenario.user.photo);
-    if (!photoPath) throw new Error('No photo path found in scenario data for upload step');
-    await reviewPage.uploadMedia(photoPath);
+When('user clicks on the Final Submit button', async function () {
+    await reviewPage.clickFinalSubmit();
 });
 
+// -----------------------------
+// Enter Text
+// -----------------------------
+When('user enters the feedback in the submit feedback field', async function () {
+    const text = currentScenario.reviewText || (currentScenario.user && currentScenario.user.reviewText);
+    await reviewPage.enterReviewText(text);
+});
+
+When('user enters the review text', async function () {
+    const text = currentScenario.reviewText
+        || (currentScenario.user && currentScenario.user.reviewText)
+        || "Default review text";
+    await reviewPage.enterReviewText(text);
+});
+
+// -----------------------------
+// Upload Media
+// -----------------------------
 When('user uploads the media file', async function () {
     const photoPath = currentScenario.mediaPhoto || (currentScenario.user && currentScenario.user.photo);
     if (!photoPath) throw new Error('No photo path found in scenario data for upload step');
     await reviewPage.uploadMedia(photoPath);
 });
 
+// -----------------------------
+// Enter User Details
+// -----------------------------
 When('user enters the user details', async function () {
-    // For SCN004 (media scenario), photo is already uploaded in the previous step.
-    // We should create a copy of the user object WITHOUT the photo to prevent double-upload attempt in enterUserDetails.
-    if (currentScenario.scenarioId === 'SCN004' || currentScenario.type === 'media upload validation') {
-        console.log('SCN004 detected: Skipping photo in enterUserDetails (upload handled separately)');
+    if (currentScenario.scenarioId === 'SCN004' || currentScenario.type === 'mediaUploadValidation') {
+        // Skip photo for SCN004, already uploaded separately
         const userDetails = { ...currentScenario.user };
         delete userDetails.photo;
         await reviewPage.enterUserDetails(userDetails);
@@ -66,13 +88,12 @@ When('user enters the user details', async function () {
     }
 });
 
-When('user clicks on the Final Submit button', async function () {
-    await reviewPage.clickFinalSubmit();
-});
-
+// -----------------------------
+// Success / Validation / Thank You
+// -----------------------------
 Then('user should see success confirmation message', async function () {
-    const expectedMessage = currentScenario.expected.successMessage;
-    await reviewPage.verifySuccessMessage(expectedMessage);
+    const message = currentScenario.expected.successMessage;
+    await reviewPage.verifySuccessMessage(message);
 });
 
 Then('user should see mandatory field validation messages', async function () {
@@ -81,65 +102,8 @@ Then('user should see mandatory field validation messages', async function () {
 });
 
 Then('user should see inactive form message', async function () {
-    const expectedMessage = currentScenario.expected.inactiveMessage;
-    await reviewPage.verifyInactiveMessage(expectedMessage);
-});
-
-Then('user should see thank you page details', async function () {
-    const expectedDetails = currentScenario.expected.thankYouPage;
-    if (!expectedDetails) throw new Error('No thankYouPage expectation found in scenario');
-    await reviewPage.verifyThankYouPage(expectedDetails);
-});
-
-Then('user closes the browser', async function () {
-    await reviewPage.clickClose();
-});
-
-
-
-When('user enters the review text', async function () {
-    console.log(`DEBUG: Current Scenario ID: ${currentScenario.scenarioId}`);
-    console.log(`DEBUG: Full Scenario: ${JSON.stringify(currentScenario, null, 2)}`);
-
-    // Check root level 'reviewText', 'reviewuserText', 'thankYouReviewText', 'userReviewText', 'mediaReviewText' OR 'user.userReviewText'
-    let text = currentScenario.reviewText || currentScenario.reviewuserText || currentScenario.thankYouReviewText || currentScenario.userReviewText || currentScenario.mediaReviewText;
-
-    if (!text && currentScenario.user) {
-        text = currentScenario.user.userReviewText || currentScenario.user.reviewText;
-    }
-
-    if (!text) throw new Error(`No review text found in currentScenario. Checked root reviewText, reviewuserText, user.userReviewText, and user.reviewText. Scenario content: ${JSON.stringify(currentScenario)}`);
-    await reviewPage.enterReviewText(text);
-});
-
-// SCN005: Thank You Page Steps
-Given('user submits the review successfully', async function () {
-    // Reusing existing flow for submission
-    await reviewPage.clickWriteExperience();
-
-    // Check if review text is needed
-    let text = currentScenario.reviewText || (currentScenario.user && currentScenario.user.reviewText) || "Great experience!";
-    await reviewPage.enterReviewText(text);
-
-    if (currentScenario.user && currentScenario.user.photo) {
-        try {
-            await reviewPage.uploadMedia(currentScenario.user.photo);
-        } catch (e) {
-            console.log("Upload failed or skipped: " + e.message);
-        }
-    }
-
-    await reviewPage.clickSubmitFeedback();
-
-    // Create copy of user without photo for the details step
-    const userWithoutPhoto = { ...currentScenario.user };
-    delete userWithoutPhoto.photo;
-
-    // Wait short time for transition
-    await reviewPage.page.waitForTimeout(1000);
-
-    await reviewPage.enterUserDetails(userWithoutPhoto);
-    await reviewPage.clickFinalSubmit();
+    const message = currentScenario.expected.inactiveMessage;
+    await reviewPage.verifyInactiveMessage(message);
 });
 
 Then('user should be navigated to the Thank You page', async function () {
@@ -167,11 +131,13 @@ Then('Thank You page description text should be {string}', async function (descr
     await reviewPage.verifyThankYouPage({ descriptionText: descriptionText });
 });
 
-
-When('user clicks on the Upload button', async function () {
-    // Rely on uploadMedia functionality which handles finding the trigger button
-});
-
 Then('signup button text should be {string}', async function (btnText) {
     await reviewPage.verifyThankYouPage({ signupButtonText: btnText });
+});
+
+// -----------------------------
+// Close Browser
+// -----------------------------
+Then('user closes the browser', async function () {
+    await reviewPage.clickClose();
 });

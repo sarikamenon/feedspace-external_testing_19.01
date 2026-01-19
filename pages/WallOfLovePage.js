@@ -14,8 +14,19 @@ class WallOfLovePage {
 
     async navigateTo(url) {
         console.log(`Navigating to ${url}`);
-        await this.page.goto(url);
-        await this.page.waitForLoadState('domcontentloaded');
+        const maxRetries = 3;
+        for (let i = 0; i < maxRetries; i++) {
+            try {
+                console.log(`Navigating to ${url} (Attempt ${i + 1}/${maxRetries})...`);
+                await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                console.log('Navigation completed.');
+                return;
+            } catch (e) {
+                console.warn(`Navigation failed (Attempt ${i + 1}): ${e.message}`);
+                if (i === maxRetries - 1) throw e;
+                await this.page.waitForTimeout(1000); // Wait before retry
+            }
+        }
     }
 
     async verifyPageTitle() {

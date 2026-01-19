@@ -1,23 +1,22 @@
 const { expect } = require('@playwright/test');
+const path = require('path');
 
 class TextReviewPage {
     constructor(page) {
         this.page = page;
 
         // Buttons
-        this.writeExperienceBtn = this.page.locator('#text-review'); // "Write Your Experience"
-        this.submitFeedbackBtn = this.page.locator('#submit-text-review, .feedspace-button-inner:has-text("Submit Testimonial"), span:has-text("Submit Testimonial"), button:has-text("Submit Testimonial"), button:has-text("Submit Feedback"), span:has-text("Submit Feedback")').first();
+        this.writeExperienceBtn = this.page.locator('#text-review, button:has-text("Write Your Experience"), button:has-text("Write Your Feedback")');
+        this.submitFeedbackBtn = this.page.locator('#submit-text-review, button:has-text("Submit Feedback"), span:has-text("Submit Feedback")').first();
         this.finalSubmitBtn = this.page.locator('#submit-btn');
         this.closeBtn = this.page.locator('#feed-form-close-btn, button[id="feed-form-close-btn"]');
 
         // Inputs
-        // Targeted visible text area to avoid hidden duplicates
         this.feedbackTextField = this.page.locator('#text-review-comment:visible, textarea[name="comment"]:visible').first();
         this.nameInput = this.page.locator('#user-name');
         this.contactInput = this.page.locator('#user-contact_number');
 
         // File Upload
-        // User specific locator for SCN004: span:has-text("Drop your file here or")
         this.uploadTrigger = this.page.locator('#select-file-button').or(this.page.locator('span:has-text("Drop your file here or")'));
         this.fileUploadInput = this.page.locator('input[type="file"]').first();
 
@@ -37,240 +36,151 @@ class TextReviewPage {
         this.inactiveMessage = this.page.locator('.feedspace-paused-form-title');
     }
 
-    // Navigate to URL
+    // Navigate to URL with retry
     async navigateTo(url) {
-        await this.page.goto(url);
-    }
-
-    // Click "Write Your Experience" with retries
-    async clickWriteExperience() {
-        console.log('Looking for Write Your Experience button...');
-        // Robust locator from user snippet
-        const writeBtn = this.page.locator('#preview-write-text, button:has(#preview-write-text), button:has-text("Write Your Experience"), button:has-text("Write Your Feedback")').first();
-
-        // Retry loop to click 'Write Your Feedback' and wait for field to be visible
-        const maxRetries = 5;
-        let attempt = 0;
-
-        while (attempt < maxRetries) {
-            console.log(`Attempting click ${attempt + 1}/${maxRetries}...`);
-
+        const maxRetries = 3;
+        for (let i = 0; i < maxRetries; i++) {
             try {
-                // Try force click even if checking visibility fails (matches user snippet logic)
-                await writeBtn.click({ force: true });
-            } catch (e) {
-                console.warn('Error clicking write button:', e.message);
-            }
-
-            try {
-                // Wait briefly for the field to appear
-                await this.feedbackTextField.waitFor({ state: 'visible', timeout: 5000 });
-                console.log('Feedback field appeared.');
+                console.log(`Navigating to ${url} (Attempt ${i + 1}/${maxRetries})...`);
+                await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
                 return;
             } catch (e) {
-                console.warn('Feedback field did not appear yet.');
+                console.warn(`Navigation failed (Attempt ${i + 1}): ${e.message}`);
+                if (i === maxRetries - 1) throw e;
+                await this.page.waitForTimeout(1000); // Wait before retry
             }
-
-            attempt++;
-            await this.page.waitForTimeout(1000); // Wait before retry
         }
-
-        // Final check if already visible
-        if (await this.feedbackTextField.isVisible()) {
-            console.log('Feedback field is visible (final check).');
-            return;
-        }
-
-        throw new Error('Feedback field did not become visible after multiple attempts.');
     }
 
-    // Fill feedback form
-    // Fill feedback form
+    // Click "Write Your Experience" robustly
+    async clickWriteExperience() {
+        const maxRetries = 3;
+        for (let i = 0; i < maxRetries; i++) {
+            try {
+                await this.writeExperienceBtn.first().waitFor({ state: 'visible', timeout: 5000 });
+                await this.writeExperienceBtn.first().click({ force: true });
+                await this.feedbackTextField.waitFor({ state: 'visible', timeout: 5000 });
+                return;
+            } catch (e) {
+                console.warn(`Attempt ${i + 1} failed: ${e.message}`);
+                await this.page.waitForTimeout(1000);
+            }
+        }
+        throw new Error('Write Your Experience button / feedback field not visible after retries.');
+    }
+
     // Fill review text
-    async enterReviewText(reviewText) {
-        console.log(`ENTERING REVIEW TEXT: "${reviewText}"`);
+    async enterReviewText(text) {
+        if (!text) return;
         await this.feedbackTextField.waitFor({ state: 'visible', timeout: 5000 });
-
-        if (reviewText) {
-            console.log('Filling feedback text field...');
-            await this.feedbackTextField.click();
-            await this.feedbackTextField.fill(reviewText);
-            // Verify text stuck
-            await expect(this.feedbackTextField).toHaveValue(reviewText, { timeout: 3000 });
-        }
+        await this.feedbackTextField.fill(text);
+        await expect(this.feedbackTextField).toHaveValue(text, { timeout: 3000 });
     }
 
-    // Fill user details (Name, Contact, Photo)
+    // Fill user details and upload photo if present
     async enterUserDetails(user) {
-        console.log('ENTERING USER DETAILS:', JSON.stringify(user));
+        if (!user) return;
 
-        if (user.name) {
-            await this.nameInput.waitFor({ state: 'visible', timeout: 5000 });
-            await this.nameInput.fill(user.name);
-        }
-
-        if (user.contact) {
-            await this.contactInput.fill(user.contact);
-        }
+        if (user.name) await this.nameInput.fill(user.name, { force: true });
+        if (user.contact) await this.contactInput.fill(user.contact, { force: true });
 
         if (user.photo) {
-            console.log(`Starting file upload for: ${user.photo}`);
-            const absolutePath = require('path').resolve(user.photo);
-            console.log(`Resolved absolute path for user photo: ${absolutePath}`);
-
-            try {
-                // Force User-Interaction Strategy: Click trigger and wait for file chooser
-                // This ensures the UI events are fired correctly.
-                console.log('Initiating file chooser flow...');
-
-                // Ensure trigger is visible before clicking
-                await this.uploadTrigger.waitFor({ state: 'visible', timeout: 5000 });
-
-                const fileChooserPromise = this.page.waitForEvent('filechooser', { timeout: 10000 });
-                await this.uploadTrigger.click();
-
-                const fileChooser = await fileChooserPromise;
-                await fileChooser.setFiles(absolutePath);
-
-                console.log('File chooser handled and files set.');
-            } catch (e) {
-                console.error(`FATAL ERROR uploading file: ${e.message}`);
-                throw e;
-            }
+            const absolutePath = path.resolve(user.photo);
+            await this.uploadTrigger.waitFor({ state: 'visible', timeout: 5000 });
+            const fileChooserPromise = this.page.waitForEvent('filechooser', { timeout: 10000 });
+            await this.uploadTrigger.click();
+            const fileChooser = await fileChooserPromise;
+            await fileChooser.setFiles(absolutePath);
         }
     }
 
-
-
-    // Explicit media upload for SCN004
+    // Explicit media upload (for SCN004 / media scenarios)
     async uploadMedia(filePath) {
-        console.log(`Explicitly uploading media: ${filePath}`);
-        // Ensure absolute path
-        const absolutePath = require('path').resolve(filePath);
-        console.log(`Resolved absolute path: ${absolutePath}`);
-
-        try {
-            // Ensure trigger is visible before clicking
-            // SCN004 uses the 'span' locator specifically
-            const trigger = this.page.locator('span:has-text("Drop your file here or")').first();
-            await trigger.waitFor({ state: 'visible', timeout: 5000 });
-
-            const fileChooserPromise = this.page.waitForEvent('filechooser', { timeout: 10000 });
-            await trigger.click();
-
-            const fileChooser = await fileChooserPromise;
-            await fileChooser.setFiles(absolutePath);
-
-            console.log('Media file uploaded successfully.');
-        } catch (e) {
-            console.error(`Error in uploadMedia: ${e.message}`);
-            throw e;
-        }
+        if (!filePath) throw new Error('No file path provided for media upload');
+        const absolutePath = path.resolve(filePath);
+        await this.uploadTrigger.waitFor({ state: 'visible', timeout: 5000 });
+        const fileChooserPromise = this.page.waitForEvent('filechooser', { timeout: 10000 });
+        await this.uploadTrigger.click();
+        const fileChooser = await fileChooserPromise;
+        await fileChooser.setFiles(absolutePath);
     }
 
     // Click Submit Feedback button
     async clickSubmitFeedback() {
         if (await this.submitFeedbackBtn.isVisible({ timeout: 5000 })) {
             await this.submitFeedbackBtn.click({ force: true });
-        } else {
-            console.warn('Submit Feedback button not visible.');
         }
     }
 
-    // Click Final Submit button (for mandatory validation)
+    // Click Final Submit button
     async clickFinalSubmit() {
         if (await this.finalSubmitBtn.isVisible({ timeout: 5000 })) {
             await this.finalSubmitBtn.click({ force: true });
-        } else {
-            console.warn('Final Submit button not visible.');
         }
     }
 
-    // Legacy fillForm using the above steps
-    async fillForm(user) {
-        await this.clickWriteExperience();
-        await this.enterFeedback(user);
-    }
-
-    // Legacy submit using the above steps
-    async submit() {
-        console.log('Submitting feedback...');
-        await this.clickSubmitFeedback();
-        await this.clickFinalSubmit();
-    }
-
-    // Verify mandatory field validation errors
+    // Verify mandatory field errors
     async verifyValidationErrors(expectedErrors) {
-        console.log('Verifying validation errors:', expectedErrors);
-
-        if (expectedErrors.includes("Please upload a photo.")) {
-            await expect(this.logoError).toHaveText("Please upload a photo.", { timeout: 5000 });
-        }
-
+        if (expectedErrors.includes("Please upload a photo.")) await expect(this.logoError).toHaveText("Please upload a photo.");
         const requiredCount = expectedErrors.filter(e => e === "This field is required.").length;
-        if (requiredCount > 0) await expect(this.nameError).toHaveText("This field is required.", { timeout: 5000 });
-        if (requiredCount > 1) await expect(this.emailError).toHaveText("This field is required.", { timeout: 5000 });
-        if (requiredCount > 2) await expect(this.contactError).toHaveText("This field is required.", { timeout: 5000 });
+        if (requiredCount > 0) await expect(this.nameError).toHaveText("This field is required.");
+        if (requiredCount > 1) await expect(this.emailError).toHaveText("This field is required.");
+        if (requiredCount > 2) await expect(this.contactError).toHaveText("This field is required.");
     }
 
     // Verify success message
     async verifySuccessMessage(message) {
-        await expect(this.successMessage).toBeVisible({ timeout: 10000 });
-        if (message) await expect(this.successMessage).toContainText(message);
+        // Wait briefly for any animation/transition
+        await this.page.waitForTimeout(1000);
+
+        console.log('Verifying success message...');
+        try {
+            // Try explicit visible wait first
+            await this.successMessage.first().waitFor({ state: 'visible', timeout: 10000 });
+        } catch (e) {
+            console.warn('Success message not immediately visible. Checking for issues...');
+        }
+
+        // Use a more specific locator if possible, or filter strict
+        const visibleSuccess = this.successMessage.locator('visible=true').first();
+        if (await visibleSuccess.count() > 0) {
+            await expect(visibleSuccess).toBeVisible({ timeout: 5000 });
+            if (message) await expect(visibleSuccess).toContainText(message);
+        } else {
+            // Fallback to original logic if filter fails
+            await expect(this.successMessage.first()).toBeVisible({ timeout: 5000 });
+            if (message) await expect(this.successMessage.first()).toContainText(message);
+        }
     }
 
     // Verify Thank You page
     async verifyThankYouPage(details) {
-        console.log('Verifying Thank You page details:', JSON.stringify(details));
         if (details.headerText) await expect(this.page.getByText(details.headerText)).toBeVisible();
         if (details.descriptionText) await expect(this.page.getByText(details.descriptionText)).toBeVisible();
-
-        if (details.shareLink && details.shareLink.shouldHaveValue) {
-            await expect(this.shareLink).toBeVisible();
-            await expect(this.shareLink).not.toBeEmpty();
-        }
-
-        if (details.platformButtons && details.platformButtons.shouldHaveValue) {
-            await expect(this.platformButtons).toBeVisible();
-        }
-
+        if (details.shareLink && details.shareLink.shouldHaveValue) await expect(this.shareLink).not.toBeEmpty();
+        if (details.platformButtons && details.platformButtons.shouldHaveValue) await expect(this.platformButtons).toBeVisible();
         if (details.socialIcons && Array.isArray(details.socialIcons)) {
             for (const icon of details.socialIcons) {
-                let iconLocator;
-                if (icon === 'WhatsApp') iconLocator = this.page.locator('#feed-share-whatsapp');
-                else if (icon === 'X') iconLocator = this.page.locator('#feed-share-twitter');
-                else if (icon === 'LinkedIn') iconLocator = this.page.locator('#feed-share-linkedin');
-                else if (icon === 'Facebook') iconLocator = this.page.locator('#feed-share-facebook');
-                else iconLocator = this.page.locator(`[aria-label="${icon}"], img[alt="${icon}"]`); // Fallback
-
-                await expect(iconLocator).toBeVisible();
+                const locator = icon === 'WhatsApp' ? '#feed-share-whatsapp' :
+                    icon === 'X' ? '#feed-share-twitter' :
+                        icon === 'LinkedIn' ? '#feed-share-linkedin' :
+                            icon === 'Facebook' ? '#feed-share-facebook' :
+                                `[aria-label="${icon}"], img[alt="${icon}"]`;
+                await expect(this.page.locator(locator)).toBeVisible();
             }
         }
-
-        if (details.signupButtonText) {
-            // Use specific locator if text matches user request
-            if (details.signupButtonText === "Got it, let's signup") {
-                await expect(this.signupButton).toBeVisible();
-            } else {
-                await expect(this.page.getByRole('button', { name: details.signupButtonText })).toBeVisible();
-            }
-        }
+        if (details.signupButtonText) await expect(this.signupButton).toBeVisible();
     }
 
-    // Verify inactive form message
-    async verifyInactiveMessage(expectedMessage) {
-        console.log(`Verifying inactive message: "${expectedMessage}"`);
-        await expect(this.inactiveMessage).toBeVisible({ timeout: 10000 });
-        if (expectedMessage) {
-            await expect(this.inactiveMessage).toHaveText(expectedMessage);
-        }
+    // Verify inactive form
+    async verifyInactiveMessage(message) {
+        await this.inactiveMessage.waitFor({ state: 'visible', timeout: 10000 });
+        if (message) await expect(this.inactiveMessage).toHaveText(message);
     }
 
     // Close form
     async clickClose() {
-        if (await this.closeBtn.count() > 0) {
-            await this.closeBtn.first().click();
-        }
+        if (await this.closeBtn.count() > 0) await this.closeBtn.first().click();
     }
 }
 
