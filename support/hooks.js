@@ -1,0 +1,27 @@
+const { Before, After, BeforeAll, AfterAll, setDefaultTimeout } = require('@cucumber/cucumber');
+const { chromium } = require('@playwright/test');
+
+setDefaultTimeout(60000);
+
+let browser;
+let context;
+let page;
+
+BeforeAll(async function () {
+    browser = await chromium.launch({ headless: false });
+});
+
+AfterAll(async function () {
+    await browser.close();
+});
+
+Before(async function () {
+    context = await browser.newContext();
+    page = await context.newPage();
+    this.page = page; // Attach page to the World instance so steps can access it
+});
+
+After(async function () {
+    await page.close();
+    await context.close();
+});
