@@ -21,7 +21,12 @@ Before(async function () {
     this.page = page; // Attach page to the World instance so steps can access it
 });
 
-After(async function () {
+After(async function (scenario) {
+    if (this.currentWidget) {
+        const widgetType = this.currentWidget.constructor.name.replace('Widget', '');
+        console.log(`[HOOK] Generating auto-report for ${widgetType} after scenario: ${scenario.pickle.name}`);
+        await this.currentWidget.generateReport(widgetType);
+    }
     await page.close();
     await context.close();
 });

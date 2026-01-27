@@ -20,5 +20,8 @@
     "@cucumber/cucumber": "^10.0.0",
     "@playwright/test": "^1.40.0",
     "prettier": "^3.0.0"
+  },
+  "dependencies": {
+    "@axe-core/playwright": "^4.11.0"
   }
 }

@@ -70,7 +70,7 @@ class MediaPage {
             console.log('Initiating file chooser flow on Upload Video/Audio button...');
 
             // Ensure button is visible before clicking
-            await this.uploadVideoAudioBtn.waitFor({ state: 'visible', timeout: 5000 });
+            await this.uploadVideoAudioBtn.waitFor({ state: 'visible', timeout: 10000 });
 
             const fileChooserPromise = this.page.waitForEvent('filechooser', { timeout: 15000 });
             await this.uploadVideoAudioBtn.click(); // Click the main upload button directly

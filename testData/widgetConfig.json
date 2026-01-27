@@ -1,0 +1,37 @@
+{
+    "page": {
+        "url": "https://www.feedspace.io/widget/10259168-1c69-4880-b4ee-e87896c78d34?info=1"
+    },
+    "widgets": [
+        {
+            "type": "Carousel",
+            "uiRules": {
+                "minReviews": 1,
+                "hasNavigation": true,
+                "autoScroll": false
+            }
+        },
+        {
+            "type": "Masonry",
+            "uiRules": {
+                "minReviews": 1,
+                "hasLoadMore": true,
+                "gridLayout": true
+            }
+        },
+        {
+            "type": "StripSlider",
+            "uiRules": {
+                "minReviews": 1,
+                "autoScroll": true
+            }
+        },
+        {
+            "type": "AvatarGroup",
+            "uiRules": {
+                "minAvatars": 1,
+                "hasNavigation": false
+            }
+        }
+    ]
+}

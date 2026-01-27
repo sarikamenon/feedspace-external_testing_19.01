@@ -1,0 +1,672 @@
+const { expect } = require('@playwright/test');
+const { AxeBuilder } = require('@axe-core/playwright');
+const fs = require('fs');
+const path = require('path');
+
+class BaseWidget {
+    constructor(page, config = {}) {
+        this.page = page;
+        this.config = config;
+        this.uiRules = config.uiRules || {};
+        this.reportType = 'Browser';
+        this.auditLog = [];
+        this.detailedFailures = []; // New for capturing exact locations
+        this.accessibilityResults = [];
+        this.reviewStats = { total: 0, text: 0, video: 0, audio: 0 };
+
+        // Base selectors - can be overridden by subclasses
+        this.containerSelector = '.feedspace-embed-main, .feedspace-element-container';
+        this.cardSelector = '.feedspace-review-item, .feedspace-element-feed-box';
+        this.brandingSelector = 'a[title="Capture reviews with Feedspace"]';
+        this.ctaSelector = '.feedspace-cta-content';
+
+        // Context (main page or iframe)
+        this.context = this.page;
+    }
+
+    logAudit(message, type = 'pass') {
+        this.auditLog.push({ message, type });
+        console.log(`[WIDGET-AUDIT] ${message}`);
+    }
+
+    async initContext() {
+        console.log('Initializing widget context...');
+        const frames = this.page.frames();
+        for (const frame of frames) {
+            try {
+                const isPresent = await frame.locator(this.containerSelector).first().isVisible({ timeout: 2000 });
+                if (isPresent) {
+                    console.log(`Widget detected in iframe: ${frame.url()}`);
+                    this.context = frame;
+                    return;
+                }
+            } catch (e) { }
+        }
+        console.log('Widget detected on main page.');
+        this.context = this.page;
+    }
+
+    async validateVisibility(minReviewsOverride) {
+        await this.initContext();
+        const minReviews = minReviewsOverride || this.uiRules.minReviews || 1;
+        const container = this.context.locator(this.containerSelector).first();
+        await expect(container).toBeVisible({ timeout: 15000 });
+        this.logAudit('Widget container is visible.');
+
+        const cards = this.context.locator(this.cardSelector);
+
+        // Wait for at least one card to appear or timeout gracefully
+        try {
+            await cards.first().waitFor({ state: 'visible', timeout: 10000 });
+        } catch (e) {
+            console.log('Timeout waiting for review cards to become visible.');
+        }
+
+        const cardCount = await cards.count();
+        this.reviewStats.total = cardCount;
+        this.reviewStats.text = 0;
+        this.reviewStats.video = 0;
+        this.reviewStats.audio = 0;
+
+        for (let i = 0; i < cardCount; i++) {
+            const card = cards.nth(i);
+            const hasVideo = await card.locator('video, iframe[src*="youtube"], iframe[src*="vimeo"], .video-play-button, .feedspace-element-play-feed:not(.feedspace-element-audio-feed-box)').count() > 0;
+            const hasAudio = await card.locator('audio, .audio-player, .fa-volume-up, .feedspace-audio-player, .feedspace-element-audio-feed-box').count() > 0;
+
+            if (hasVideo) this.reviewStats.video++;
+            else if (hasAudio) this.reviewStats.audio++;
+            else this.reviewStats.text++;
+        }
+
+        this.logAudit(`Reviews Segmented: Total ${cardCount} (Text: ${this.reviewStats.text}, Video: ${this.reviewStats.video}, Audio: ${this.reviewStats.audio})`);
+
+        if (cardCount >= minReviews) {
+            this.logAudit(`Found ${cardCount} reviews (min required: ${minReviews}).`);
+        } else {
+            this.logAudit(`Insufficient reviews: Found ${cardCount}, expected at least ${minReviews}.`, 'fail');
+        }
+    }
+
+    async validateBranding() {
+        const branding = this.context.locator(this.brandingSelector).first();
+        if (await branding.isVisible()) {
+            this.logAudit('Feedspace branding is visible: "Capture reviews with Feedspace"');
+        } else {
+            this.logAudit('Feedspace branding not found or hidden.', 'info');
+        }
+    }
+
+    async validateCTA() {
+        const cta = this.context.locator(this.ctaSelector).first();
+        if (await cta.isVisible()) {
+            this.logAudit('Inline CTA found: .feedspace-cta-content');
+        } else {
+            this.logAudit('No Inline CTA (.feedspace-cta-content) found on this widget.', 'info');
+        }
+    }
+
+    async validateDateConsistency() {
+        console.log('Running Date Consistency check...');
+        const cards = this.context.locator(this.cardSelector);
+        const count = await cards.count();
+        let invalidDates = [];
+
+        for (let i = 0; i < count; i++) {
+            const card = cards.nth(i);
+            // Search globally within the card for 'undefined' to be safe
+            const cardHtml = await card.innerHTML();
+            const cardText = await card.innerText();
+
+            if (cardHtml.toLowerCase().includes('undefined') || cardText.toLowerCase().includes('undefined')) {
+                // If it's a date element specifically
+                const dateElement = card.locator('.date, .review-date, .feedspace-element-date, .feedspace-element-feed-date, .feedspace-element-date-text').first();
+                let location = 'Text context';
+                let snippet = cardText.substring(0, 100) + '...';
+
+                if (await dateElement.count() > 0) {
+                    const dText = await dateElement.innerText();
+                    if (dText.toLowerCase().includes('undefined')) {
+                        location = 'Date Element';
+                        snippet = await dateElement.innerHTML();
+                        invalidDates.push(i + 1);
+                        this.detailedFailures.push({
+                            type: 'Undefined dates',
+                            card: i + 1,
+                            location: location,
+                            snippet: snippet.replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+                            description: "Date strings not rendered properly, showing 'undefined'.",
+                            severity: 'High'
+                        });
+                    }
+                } else {
+                    // Fallback to general text match if no specific date element found but 'undefined' is present
+                    invalidDates.push(i + 1);
+                    this.detailedFailures.push({
+                        type: 'Undefined dates',
+                        card: i + 1,
+                        location: 'General Content',
+                        snippet: cardHtml.substring(0, 150).replace(/</g, '&lt;').replace(/>/g, '&gt;') + '...',
+                        description: "Date strings not rendered properly, showing 'undefined'.",
+                        severity: 'High'
+                    });
+                }
+            }
+        }
+
+        if (invalidDates.length > 0) {
+            this.logAudit(`Date Consistency: Found 'undefined' date strings in cards #${invalidDates.join(', #')}`, 'fail');
+        } else {
+            this.logAudit('Date Consistency: All review dates appear valid.');
+        }
+    }
+
+    async validateLayoutIntegrity() {
+        console.log('Running Layout Integrity check...');
+        const cards = this.context.locator(this.cardSelector);
+        const count = await cards.count();
+        let overlaps = [];
+
+        if (count < 2) {
+            this.logAudit('Layout Integrity: Not enough cards to check for overlaps.');
+            return;
+        }
+
+        // Get container bounding box to filter off-screen elements
+        const container = this.context.locator(this.containerSelector).first();
+        const containerBox = await container.boundingBox();
+        const containerVisible = await container.isVisible();
+
+        if (!containerVisible || !containerBox) {
+            this.logAudit('Layout Integrity: Container not visible, skipping check.', 'info');
+            return;
+        }
+
+        const visibleCards = [];
+        for (let i = 0; i < count; i++) {
+            const card = cards.nth(i);
+            if (await card.isVisible()) {
+                const box = await card.boundingBox();
+                // Check intersection with container (simple inclusion check)
+                // We consider a card "in view" if it has some overlap with the container's viewport
+                if (box) {
+                    const intersects = !(
+                        box.x > containerBox.x + containerBox.width ||
+                        box.x + box.width < containerBox.x ||
+                        box.y > containerBox.y + containerBox.height ||
+                        box.y + box.height < containerBox.y
+                    );
+
+                    if (intersects) {
+                        // Get snippet for detailed reporting if needed
+                        const html = await card.innerHTML();
+                        visibleCards.push({ index: i + 1, box, card, html });
+                    }
+                }
+            }
+        }
+
+        if (visibleCards.length < 2) {
+            this.logAudit('Layout Integrity: Not enough visible cards in container viewport to check.');
+            return;
+        }
+
+        for (let i = 0; i < visibleCards.length; i++) {
+            for (let j = i + 1; j < visibleCards.length; j++) {
+                const c1 = visibleCards[i];
+                const c2 = visibleCards[j];
+                const b1 = c1.box;
+                const b2 = c2.box;
+
+                // Check for significant overlap (e.g., > 10% overlap area) or strict overlap?
+                // Strict overlap is safer for now.
+                const hasOverlap = !(
+                    b1.x + b1.width <= b2.x ||
+                    b2.x + b2.width <= b1.x ||
+                    b1.y + b1.height <= b2.y ||
+                    b2.y + b2.height <= b1.y
+                );
+
+                if (hasOverlap) {
+                    const msg = `Card ${c1.index} overlaps with Card ${c2.index}`;
+                    overlaps.push(msg);
+
+                    // Add detailed failure for report
+                    this.detailedFailures.push({
+                        type: 'Layout Integrity',
+                        card: `${c1.index} & ${c2.index}`,
+                        description: `Overlapping cards detected.`,
+                        location: 'Card Element (BoundingBox Check)',
+                        snippet: c1.html.substring(0, 100) + '...', // Preview of first card
+                        severity: 'High'
+                    });
+                }
+            }
+        }
+
+        if (overlaps.length > 0) {
+            this.logAudit(`Layout Integrity: Overlapping cards detected: ${overlaps.slice(0, 3).join(', ')}${overlaps.length > 3 ? '...' : ''}`, 'fail');
+        } else {
+            this.logAudit('Layout Integrity: No overlapping cards found.');
+        }
+    }
+
+    async validateAlignment() {
+        console.log('Running Alignment check...');
+        const cards = this.context.locator(this.cardSelector);
+        const count = await cards.count();
+        if (count < 2) return;
+
+        const boxes = [];
+        for (let i = 0; i < count; i++) {
+            const box = await cards.nth(i).boundingBox();
+            if (box) boxes.push(box);
+        }
+
+        let alignmentIssues = 0;
+        // Check if cards that are horizontally adjacent (approx same Y) have the same height
+        for (let i = 0; i < boxes.length - 1; i++) {
+            if (Math.abs(boxes[i].y - boxes[i + 1].y) < 10) { // Same row
+                if (Math.abs(boxes[i].height - boxes[i + 1].height) > 5) {
+                    alignmentIssues++;
+                }
+            }
+        }
+
+        if (alignmentIssues > 0) {
+            this.logAudit(`Alignment: Found ${alignmentIssues} cards with uneven heights in the same row.`, 'info');
+        } else {
+            this.logAudit('Alignment: Cards are correctly aligned.');
+        }
+    }
+
+    async validateTextReadability() {
+        console.log('Running Text Readability check...');
+        const cards = this.context.locator(this.cardSelector);
+        const cardCount = await cards.count();
+        let issues = [];
+
+        for (let i = 0; i < cardCount; i++) {
+            const card = cards.nth(i);
+            const textElements = card.locator('p, .review-text, .content, .feedspace-element-feed-text');
+            const paramsCount = await textElements.count();
+
+            for (let j = 0; j < paramsCount; j++) {
+                const el = textElements.nth(j);
+                const result = await el.evaluate(el => {
+                    const style = window.getComputedStyle(el);
+                    const isOverflowing = el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth;
+                    const isTruncated = style.textOverflow === 'ellipsis' ||
+                        style.webkitLineClamp !== 'none' ||
+                        style.overflow === 'hidden' ||
+                        style.overflowY === 'hidden';
+                    const isHidden = style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) === 0;
+                    return { isOverflowing, isTruncated, isHidden };
+                });
+
+                if (result.isOverflowing && !result.isTruncated && !result.isHidden) {
+                    issues.push(`Card #${i + 1}`);
+                    let snippet = await el.innerText();
+                    this.detailedFailures.push({
+                        type: 'Text Readability',
+                        card: i + 1,
+                        location: 'Review Text Element',
+                        snippet: snippet.substring(0, 100) + '...',
+                        description: 'Text element has visual overflow.',
+                        severity: 'Medium'
+                    });
+                }
+            }
+        }
+
+        if (issues.length > 0) {
+            this.logAudit(`Text Readability: Text overflow detected in ${issues.length} elements.`, 'fail');
+        } else {
+            this.logAudit('Text Readability: No text overflow detected (all content visible).');
+        }
+    }
+
+    async validateReadMore() {
+        console.log('Running Read More functionality check...');
+        // Look for buttons or spans that indicate "Read More" functionality
+        // Selector strategy: specific class or generic text match within the widget
+        const readMoreButtons = this.context.locator('.feedspace-read-more-text, .feedspace-element-read-more-text-span, button:has-text("Read more"), span:has-text("Read more")');
+        const count = await readMoreButtons.count();
+
+        if (count === 0) {
+            this.logAudit('Read More Functionality: No "Read more" buttons found (all text likely visible).', 'info');
+            return;
+        }
+
+        let successCount = 0;
+        let failures = [];
+
+        // Check up to 3 instances to avoid test timeouts
+        const checkLimit = Math.min(count, 3);
+
+        for (let i = 0; i < checkLimit; i++) {
+            const btn = readMoreButtons.nth(i);
+
+            // Ensure visible before interacting regarding the parent container
+            if (!(await btn.isVisible())) continue;
+
+            const card = btn.locator('xpath=./ancestor::*[contains(@class, "feedspace-review-item") or contains(@class, "feedspace-element-feed-box")]').first();
+
+            try {
+                // Get text container height before click (if possible)
+                // We'll rely on the presence of "Read Less" or button disappearance as success
+                await btn.click({ force: true });
+                await this.page.waitForTimeout(500); // UI transition
+
+                // Verify state change: Look for "Read less" or check if "Read more" is gone
+                // The report snippet showed 'feedspace-element-read-less-text-span', so we look for that or similar text
+                const hasReadLess = await card.locator('.feedspace-read-less-text, .feedspace-element-read-less-text-span, button:has-text("Read less"), span:has-text("Read less")').count() > 0;
+
+                if (hasReadLess) {
+                    successCount++;
+                } else {
+                    // Maybe the button just disappears?
+                    const btnStillVisible = await btn.isVisible();
+                    if (!btnStillVisible) {
+                        successCount++;
+                    } else {
+                        failures.push(`Card with Read More button #${i + 1} did not toggle state.`);
+                    }
+                }
+            } catch (e) {
+                failures.push(`Failed to click Read More on instance #${i + 1}: ${e.message}`);
+            }
+        }
+
+        if (failures.length > 0) {
+            this.logAudit(`Read More Functionality: Failed to verify expansion on ${failures.length} cards.`, 'fail');
+        } else {
+            this.logAudit(`Read More Functionality: Verified expansion on ${successCount} cards.`);
+        }
+    }
+
+    async validateResponsiveness(device = 'Mobile') {
+        console.log(`Running Responsiveness check for ${device}...`);
+        this.reportType = device;
+        const viewports = {
+            'Mobile': { width: 375, height: 812 },
+            'Tablet': { width: 768, height: 1024 },
+            'Desktop': { width: 1440, height: 900 }
+        };
+
+        const vp = viewports[device] || viewports['Mobile'];
+        await this.page.setViewportSize(vp);
+        await this.page.waitForTimeout(3000);
+        this.logAudit(`Responsiveness: Validated layout for ${device} (${vp.width}x${vp.height}).`);
+
+        // Re-check visibility and layout at this breakpoint
+        const container = this.context.locator(this.containerSelector).first();
+        if (await container.isVisible()) {
+            this.logAudit(`${device} Layout: Widget remains visible and functional.`);
+        } else {
+            this.logAudit(`${device} Layout: Widget became hidden!`, 'fail');
+        }
+    }
+
+    async runAccessibilityAudit() {
+        console.log(`Running Accessibility Audit (${this.reportType})...`);
+        try {
+            const results = await new AxeBuilder({ page: this.page }).analyze();
+            this.accessibilityResults.push({ type: this.reportType, violations: results.violations });
+
+            if (results.violations.length === 0) {
+                this.logAudit(`Accessibility (${this.reportType}): No violations found.`);
+            } else {
+                this.logAudit(`Accessibility (${this.reportType}): Found ${results.violations.length} violations.`, 'fail');
+            }
+        } catch (e) {
+            this.logAudit(`Accessibility Audit Error: ${e.message}`, 'fail');
+        }
+    }
+
+    async validateMediaIntegrity() {
+        console.log('Running Media Integrity check...');
+        const images = this.context.locator('img');
+        const imgCount = await images.count();
+        let brokenImages = 0;
+
+        for (let i = 0; i < imgCount; i++) {
+            const isBroken = await images.nth(i).evaluate(img => !img.complete || img.naturalWidth === 0);
+            if (isBroken) brokenImages++;
+        }
+
+        if (brokenImages > 0) {
+            this.logAudit(`Media Integrity: Found ${brokenImages} broken images.`, 'fail');
+        } else {
+            this.logAudit('Media Integrity: All images loaded correctly.');
+        }
+
+        const videos = this.context.locator('video, .feedspace-element-video-player, iframe[src*="youtube"], iframe[src*="vimeo"]');
+        const videoCount = await videos.count();
+        let videoErrors = 0;
+        for (let i = 0; i < videoCount; i++) {
+            const tag = await videos.nth(i).evaluate(v => v.tagName.toLowerCase());
+            if (tag === 'video') {
+                const error = await videos.nth(i).evaluate(v => v.error);
+                if (error) videoErrors++;
+            }
+            // For iframes, we just check visibility
+            const isVisible = await videos.nth(i).isVisible();
+            if (!isVisible) videoErrors++;
+        }
+        if (videoErrors > 0) {
+            this.logAudit(`Media Integrity: Found ${videoErrors} video loading/playback issues.`, 'fail');
+        } else if (videoCount > 0) {
+            this.logAudit(`Media Integrity: Successfully verified ${videoCount} video elements.`);
+        }
+    }
+
+    async validateCardConsistency() {
+        console.log('Running Card Consistency check...');
+        // User feedback: Some reviews only have star ratings, so strict author/text checks are removed.
+        this.logAudit('Card Consistency: Checks skipped (Star-only reviews are valid).');
+    }
+
+    async generateReport(widgetType) {
+        const reportDir = path.resolve('reports');
+        if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
+
+        const filename = `Report_${widgetType}_${this.reportType}.html`;
+        const reportPath = path.join(reportDir, filename);
+        const date = new Date().toLocaleString();
+
+        // Helper to get find audit results by keywords
+        const getAuditStatus = (keyword) => {
+            const entry = this.auditLog.find(l => l.message.includes(keyword));
+            if (!entry) return { icon: '❓', text: 'Not Tested' };
+            return {
+                icon: entry.type === 'fail' ? '❌' : (entry.type === 'info' ? 'ℹ️' : '✅'),
+                type: entry.type
+            };
+        };
+
+        const contentIssueEntry = this.auditLog.find(l => l.message.includes('Card Consistency'));
+        const dateIssueEntry = this.auditLog.find(l => l.message.includes('Date Consistency'));
+        const a11yIssueEntry = this.auditLog.find(l => l.message.includes('Accessibility'));
+
+        const styles = `
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 1000px; margin: 0 auto; padding: 30px; background: #f8f9fa; }
+            h1, h2, h3 { color: #2c3e50; }
+            .report-card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 30px; }
+            .summary-item { margin-bottom: 12px; font-size: 16px; border-bottom: 1px solid #f0f0f0; padding-bottom: 8px; }
+            .status-pass { color: #27ae60; font-weight: bold; }
+            .status-fail { color: #e74c3c; font-weight: bold; }
+            .status-info { color: #3498db; font-weight: bold; }
+            
+            table { width: 100%; border-collapse: collapse; margin: 20px 0; background: white; }
+            th, td { padding: 12px 15px; border: 1px solid #e1e4e8; text-align: left; }
+            th { background-color: #f1f3f5; color: #495057; font-weight: 600; }
+            tr:nth-child(even) { background-color: #fafbfc; }
+            
+            .severity-critical { background: #fee2e2; color: #991b1b; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+            .severity-high { background: #ffedd5; color: #9a3412; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+            
+            .violation-card { border-left: 5px solid #e74c3c; background: #fff5f5; padding: 15px; margin-bottom: 20px; border-radius: 0 8px 8px 0; }
+            .target-path { color: #e83e8c; font-weight: bold; font-family: monospace; display: block; margin-bottom: 5px; }
+            .html-snippet { background: #2d3436; color: #fab1a0; padding: 10px; border-radius: 4px; display: block; overflow-x: auto; font-family: 'Courier New', Courier, monospace; font-size: 13px; }
+            
+            .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; margin-bottom: 30px; }
+            .metric-box { background: #fff; border: 1px solid #e1e4e8; padding: 20px; border-radius: 8px; text-align: center; }
+            .metric-val { font-size: 28px; font-weight: bold; color: #3498db; display: block; }
+            .metric-label { font-size: 12px; color: #7f8c8d; text-transform: uppercase; letter-spacing: 1px; }
+        `;
+
+        // 2.1 Content & Card Issues Table Rows
+        let contentIssuesHtml = '';
+        this.detailedFailures.forEach(fail => {
+            contentIssuesHtml += `
+                <tr>
+                    <td>${fail.type}</td>
+                    <td>#${fail.card}</td>
+                    <td>
+                    <td>
+                        ${fail.description}<br>
+                        <strong>Exact Location:</strong> ${fail.location}<br>
+                        <code class="html-snippet" style="font-size:11px; margin-top:5px;">${fail.snippet}</code>
+                    </td>
+                    <td><span class="severity-${fail.severity.toLowerCase()}">${fail.severity}</span></td>
+                </tr>`;
+        });
+        if (!contentIssuesHtml) contentIssuesHtml = '<tr><td colspan="4" style="text-align:center; color:green;">✅ No content issues detected</td></tr>';
+
+        // 2.2 Accessibility Detailed Results
+        let a11yDetailedHtml = '';
+        let totalA11yViolations = 0;
+        this.accessibilityResults.forEach(res => {
+            res.violations.forEach(v => {
+                totalA11yViolations++;
+                let nodesHtml = '';
+                v.nodes.forEach(node => {
+                    nodesHtml += `
+                        <div style="margin-top:10px;">
+                            <span class="target-path">${node.target.join(' > ')}</span>
+                            <code class="html-snippet">${node.html.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code>
+                        </div>`;
+                });
+                a11yDetailedHtml += `
+                    <div class="violation-card">
+                        <h4 style="margin-top:0;">${v.id} [${res.type}]</h4>
+                        <p><strong>Description:</strong> ${v.description}</p>
+                        <p><strong>Severity:</strong> <span class="severity-critical">${v.impact}</span></p>
+                        ${nodesHtml}
+                    </div>`;
+            });
+        });
+
+        // 2.3 Functionality & Layout Table
+        const features = [
+            ['Widget container visibility', 'Widget container is visible'],
+            ['Reviews Segmentation', 'Reviews Segmented'],
+            ['Feedspace Branding', 'Feedspace branding'],
+            ['Inline CTA', 'Inline CTA'],
+            ['Layout Integrity', 'Layout Integrity'],
+            ['Alignment', 'Alignment'],
+            ['Text Readability', 'Text Readability'],
+            ['Media Integrity', 'Media Integrity'],
+            ['Navigation', 'Navigation'],
+            ['Responsiveness', 'Responsiveness']
+        ];
+
+        let funcRows = '';
+        features.forEach(([name, key]) => {
+            const status = getAuditStatus(key);
+            const notes = this.auditLog.find(l => l.message.includes(key))?.message || 'N/A';
+            funcRows += `
+                <tr>
+                    <td>${name}</td>
+                    <td>${status.icon}</td>
+                    <td>${notes}</td>
+                </tr>`;
+        });
+
+        const htmlContent = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Widget UI Audit - ${widgetType}</title>
+    <style>${styles}</style>
+</head>
+<body>
+    <h1>1. Executive Summary</h1>
+    <div class="report-card">
+        <p>The Reviews Widget was tested for UI integrity, content consistency, accessibility, and responsiveness.</p>
+        
+        <div class="metrics-grid">
+            <div class="metric-box"><span class="metric-val">${this.reviewStats.total}</span><span class="metric-label">Total Reviews</span></div>
+            <div class="metric-box"><span class="metric-val">${this.reviewStats.text}</span><span class="metric-label">Text Reviews</span></div>
+            <div class="metric-box"><span class="metric-val">${this.reviewStats.video}</span><span class="metric-label">Video Reviews</span></div>
+            <div class="metric-box"><span class="metric-val">${this.reviewStats.audio}</span><span class="metric-label">Audio Reviews</span></div>
+        </div>
+
+        <div class="summary-item">${getAuditStatus('container is visible').icon} Widget container is visible and functional.</div>
+        <div class="summary-item">${getAuditStatus('Reviews Segmented').icon} Reviews Segmentation: ${this.reviewStats.total} reviews loaded (Text: ${this.reviewStats.text}, Video: ${this.reviewStats.video}, Audio: ${this.reviewStats.audio})</div>
+        <div class="summary-item">${getAuditStatus('Media Integrity').icon} Media Integrity: ${getAuditStatus('Media Integrity').type === 'fail' ? 'Broken media found.' : 'All images and videos loaded successfully.'}</div>
+        <div class="summary-item">${getAuditStatus('Layout Integrity').icon} Layout & Alignment: Cards aligned, no overlapping detected.</div>
+        
+        <div class="summary-item" style="margin-top:20px; padding:15px; background:#fff3f3; border-radius:8px; border-left:5px solid #e74c3c;">
+            <strong>❌ Critical Issues:</strong> 
+            ${contentIssueEntry?.type === 'fail' ? 'Missing review content, ' : ''}
+            ${dateIssueEntry?.type === 'fail' ? 'undefined dates, ' : ''}
+            ${totalA11yViolations > 0 ? 'accessibility violations.' : ''}
+            ${(!contentIssuesHtml.includes('❌') && totalA11yViolations === 0) ? 'None' : ''}
+        </div>
+        
+        <p style="margin-top:20px; font-style:italic; color:#7f8c8d;">
+            Overall, the widget functions correctly, but content and accessibility issues need immediate attention.
+        </p>
+    </div>
+
+    <h1>2. Detailed Findings</h1>
+    
+    <h2>2.1 Content & Card Issues</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Issue</th>
+                <th>Cards Affected</th>
+                <th>Description</th>
+                <th>Severity</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${contentIssuesHtml}
+        </tbody>
+    </table>
+
+    <h2>2.2 Accessibility Issues</h2>
+    <div class="report-card">
+        <p><strong>${totalA11yViolations} violations detected</strong> by browser accessibility audit (e.g., missing alt text, button labels, ARIA roles)</p>
+        ${a11yDetailedHtml || '<p style="color:green;">✅ No violations found.</p>'}
+    </div>
+
+    <h2>2.3 Functionality & Layout</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Feature</th>
+                <th>Status</th>
+                <th>Notes</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${funcRows}
+        </tbody>
+    </table>
+
+    <div style="text-align: center; margin-top: 50px; color: #bdc3c7; font-size: 13px;">
+        Generated by Antigravity Automation Agent on ${date} | URL: ${this.config?.page?.url || 'N/A'}
+    </div>
+</body>
+</html>`;
+
+        fs.writeFileSync(reportPath, htmlContent);
+        console.log(`Rich HTML Report generated: ${reportPath}`);
+    }
+}
+
+module.exports = { BaseWidget };

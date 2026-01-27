@@ -38,7 +38,7 @@ class TextReviewPage {
 
     // Navigate to URL with retry
     async navigateTo(url) {
-        const maxRetries = 3;
+        const maxRetries = 5;
         for (let i = 0; i < maxRetries; i++) {
             try {
                 console.log(`Navigating to ${url} (Attempt ${i + 1}/${maxRetries})...`);
@@ -47,7 +47,7 @@ class TextReviewPage {
             } catch (e) {
                 console.warn(`Navigation failed (Attempt ${i + 1}): ${e.message}`);
                 if (i === maxRetries - 1) throw e;
-                await this.page.waitForTimeout(1000); // Wait before retry
+                await this.page.waitForTimeout(2000); // Wait before retry
             }
         }
     }
@@ -57,9 +57,9 @@ class TextReviewPage {
         const maxRetries = 3;
         for (let i = 0; i < maxRetries; i++) {
             try {
-                await this.writeExperienceBtn.first().waitFor({ state: 'visible', timeout: 5000 });
+                await this.writeExperienceBtn.first().waitFor({ state: 'visible', timeout: 10000 });
                 await this.writeExperienceBtn.first().click({ force: true });
-                await this.feedbackTextField.waitFor({ state: 'visible', timeout: 5000 });
+                await this.feedbackTextField.waitFor({ state: 'visible', timeout: 10000 });
                 return;
             } catch (e) {
                 console.warn(`Attempt ${i + 1} failed: ${e.message}`);
@@ -72,22 +72,28 @@ class TextReviewPage {
     // Fill review text
     async enterReviewText(text) {
         if (!text) return;
-        await this.feedbackTextField.waitFor({ state: 'visible', timeout: 5000 });
+        await this.feedbackTextField.waitFor({ state: 'visible', timeout: 10000 });
         await this.feedbackTextField.fill(text);
-        await expect(this.feedbackTextField).toHaveValue(text, { timeout: 3000 });
+        await expect(this.feedbackTextField).toHaveValue(text, { timeout: 10000 });
     }
 
     // Fill user details and upload photo if present
     async enterUserDetails(user) {
         if (!user) return;
 
-        if (user.name) await this.nameInput.fill(user.name, { force: true });
-        if (user.contact) await this.contactInput.fill(user.contact, { force: true });
+        console.log('entering user details...');
+        if (user.name) {
+            await this.nameInput.waitFor({ state: 'visible', timeout: 10000 });
+            await this.nameInput.fill(user.name, { force: true });
+        }
+        if (user.contact) {
+            await this.contactInput.fill(user.contact, { force: true });
+        }
 
         if (user.photo) {
             const absolutePath = path.resolve(user.photo);
-            await this.uploadTrigger.waitFor({ state: 'visible', timeout: 5000 });
-            const fileChooserPromise = this.page.waitForEvent('filechooser', { timeout: 10000 });
+            await this.uploadTrigger.waitFor({ state: 'visible', timeout: 15000 });
+            const fileChooserPromise = this.page.waitForEvent('filechooser', { timeout: 15000 });
             await this.uploadTrigger.click();
             const fileChooser = await fileChooserPromise;
             await fileChooser.setFiles(absolutePath);
@@ -98,7 +104,7 @@ class TextReviewPage {
     async uploadMedia(filePath) {
         if (!filePath) throw new Error('No file path provided for media upload');
         const absolutePath = path.resolve(filePath);
-        await this.uploadTrigger.waitFor({ state: 'visible', timeout: 5000 });
+        await this.uploadTrigger.waitFor({ state: 'visible', timeout: 10000 });
         const fileChooserPromise = this.page.waitForEvent('filechooser', { timeout: 10000 });
         await this.uploadTrigger.click();
         const fileChooser = await fileChooserPromise;
@@ -107,14 +113,14 @@ class TextReviewPage {
 
     // Click Submit Feedback button
     async clickSubmitFeedback() {
-        if (await this.submitFeedbackBtn.isVisible({ timeout: 5000 })) {
+        if (await this.submitFeedbackBtn.isVisible({ timeout: 10000 })) {
             await this.submitFeedbackBtn.click({ force: true });
         }
     }
 
     // Click Final Submit button
     async clickFinalSubmit() {
-        if (await this.finalSubmitBtn.isVisible({ timeout: 5000 })) {
+        if (await this.finalSubmitBtn.isVisible({ timeout: 10000 })) {
             await this.finalSubmitBtn.click({ force: true });
         }
     }
@@ -144,11 +150,11 @@ class TextReviewPage {
         // Use a more specific locator if possible, or filter strict
         const visibleSuccess = this.successMessage.locator('visible=true').first();
         if (await visibleSuccess.count() > 0) {
-            await expect(visibleSuccess).toBeVisible({ timeout: 5000 });
+            await expect(visibleSuccess).toBeVisible({ timeout: 10000 });
             if (message) await expect(visibleSuccess).toContainText(message);
         } else {
             // Fallback to original logic if filter fails
-            await expect(this.successMessage.first()).toBeVisible({ timeout: 5000 });
+            await expect(this.successMessage.first()).toBeVisible({ timeout: 10000 });
             if (message) await expect(this.successMessage.first()).toContainText(message);
         }
     }

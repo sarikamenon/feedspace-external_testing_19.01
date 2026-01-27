@@ -23,6 +23,13 @@ if %errorlevel% neq 0 (
     set "exit_code=1"
 )
 
+echo Running Widget Feature...
+call npx cucumber-js features/widget.feature
+if %errorlevel% neq 0 (
+    echo Widget Feature failed!
+    set "exit_code=1"
+)
+
 if %exit_code% neq 0 (
     echo Some tests failed. Exiting with error.
     exit /b %exit_code%
