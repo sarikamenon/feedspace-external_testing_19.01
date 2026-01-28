@@ -1,6 +1,7 @@
 {
     "page": {
-        "url": "https://www.feedspace.io/widget/10259168-1c69-4880-b4ee-e87896c78d34?info=1"
+        "url": "https://www.feedspace.io/widget/0405721b-eb64-403d-9d38-5c4addc5e9a6?info=1",
+        "timeout": 30000
     },
     "widgets": [
         {

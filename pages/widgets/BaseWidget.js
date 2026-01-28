@@ -217,13 +217,13 @@ class BaseWidget {
                 const b1 = c1.box;
                 const b2 = c2.box;
 
-                // Check for significant overlap (e.g., > 10% overlap area) or strict overlap?
-                // Strict overlap is safer for now.
+                // Check for significant overlap with tolerance (e.g., 5px to handle sub-pixel rendering or tight masonry packing)
+                const tolerance = 5;
                 const hasOverlap = !(
-                    b1.x + b1.width <= b2.x ||
-                    b2.x + b2.width <= b1.x ||
-                    b1.y + b1.height <= b2.y ||
-                    b2.y + b2.height <= b1.y
+                    b1.x + b1.width - tolerance <= b2.x ||
+                    b2.x + b2.width - tolerance <= b1.x ||
+                    b1.y + b1.height - tolerance <= b2.y ||
+                    b2.y + b2.height - tolerance <= b1.y
                 );
 
                 if (hasOverlap) {
@@ -256,24 +256,42 @@ class BaseWidget {
         const count = await cards.count();
         if (count < 2) return;
 
-        const boxes = [];
+        const cardData = [];
         for (let i = 0; i < count; i++) {
-            const box = await cards.nth(i).boundingBox();
-            if (box) boxes.push(box);
+            const card = cards.nth(i);
+            if (await card.isVisible()) {
+                const box = await card.boundingBox();
+                if (box) {
+                    const html = await card.innerHTML();
+                    cardData.push({ index: i + 1, box, html });
+                }
+            }
         }
 
         let alignmentIssues = 0;
         // Check if cards that are horizontally adjacent (approx same Y) have the same height
-        for (let i = 0; i < boxes.length - 1; i++) {
-            if (Math.abs(boxes[i].y - boxes[i + 1].y) < 10) { // Same row
-                if (Math.abs(boxes[i].height - boxes[i + 1].height) > 5) {
+        for (let i = 0; i < cardData.length - 1; i++) {
+            const c1 = cardData[i];
+            const c2 = cardData[i + 1];
+
+            if (Math.abs(c1.box.y - c2.box.y) < 10) { // Same row
+                if (Math.abs(c1.box.height - c2.box.height) > 5) {
                     alignmentIssues++;
+                    // Add detailed failure for report
+                    this.detailedFailures.push({
+                        type: 'Alignment',
+                        card: `${c1.index} & ${c2.index}`,
+                        description: `Uneven card heights in same row (Diff: ${Math.abs(c1.box.height - c2.box.height).toFixed(1)}px)`,
+                        location: 'Row Alignment',
+                        snippet: c1.html.substring(0, 100) + '...', // Preview of first card
+                        severity: 'Info' // Usually a styling choice, not critical
+                    });
                 }
             }
         }
 
         if (alignmentIssues > 0) {
-            this.logAudit(`Alignment: Found ${alignmentIssues} cards with uneven heights in the same row.`, 'info');
+            this.logAudit(`Alignment: Found ${alignmentIssues} pairs of cards with uneven heights in the same row.`, 'info');
         } else {
             this.logAudit('Alignment: Cards are correctly aligned.');
         }
@@ -560,7 +578,6 @@ class BaseWidget {
         // 2.3 Functionality & Layout Table
         const features = [
             ['Widget container visibility', 'Widget container is visible'],
-            ['Reviews Segmentation', 'Reviews Segmented'],
             ['Feedspace Branding', 'Feedspace branding'],
             ['Inline CTA', 'Inline CTA'],
             ['Layout Integrity', 'Layout Integrity'],
@@ -568,7 +585,9 @@ class BaseWidget {
             ['Text Readability', 'Text Readability'],
             ['Media Integrity', 'Media Integrity'],
             ['Navigation', 'Navigation'],
-            ['Responsiveness', 'Responsiveness']
+            ['Load More Behavior', 'Load More'],
+            ['Responsiveness', 'Responsiveness'],
+            ['Interaction', 'Interaction']
         ];
 
         let funcRows = '';
@@ -601,10 +620,11 @@ class BaseWidget {
             <div class="metric-box"><span class="metric-val">${this.reviewStats.text}</span><span class="metric-label">Text Reviews</span></div>
             <div class="metric-box"><span class="metric-val">${this.reviewStats.video}</span><span class="metric-label">Video Reviews</span></div>
             <div class="metric-box"><span class="metric-val">${this.reviewStats.audio}</span><span class="metric-label">Audio Reviews</span></div>
+            ${typeof this.reviewStats.cta !== 'undefined' ? `<div class="metric-box"><span class="metric-val">${this.reviewStats.cta}</span><span class="metric-label">CTA Buttons</span></div>` : ''}
         </div>
 
         <div class="summary-item">${getAuditStatus('container is visible').icon} Widget container is visible and functional.</div>
-        <div class="summary-item">${getAuditStatus('Reviews Segmented').icon} Reviews Segmentation: ${this.reviewStats.total} reviews loaded (Text: ${this.reviewStats.text}, Video: ${this.reviewStats.video}, Audio: ${this.reviewStats.audio})</div>
+        <div class="summary-item">${getAuditStatus('Reviews Segmented').icon} Reviews Segmentation: ${this.reviewStats.total} reviews loaded (Text: ${this.reviewStats.text}, Video: ${this.reviewStats.video}, Audio: ${this.reviewStats.audio}${typeof this.reviewStats.cta !== 'undefined' ? `, CTAs: ${this.reviewStats.cta}` : ''})</div>
         <div class="summary-item">${getAuditStatus('Media Integrity').icon} Media Integrity: ${getAuditStatus('Media Integrity').type === 'fail' ? 'Broken media found.' : 'All images and videos loaded successfully.'}</div>
         <div class="summary-item">${getAuditStatus('Layout Integrity').icon} Layout & Alignment: Cards aligned, no overlapping detected.</div>
         
