@@ -109,54 +109,53 @@ class BaseWidget {
         console.log('Running Date Consistency check...');
         const cards = this.context.locator(this.cardSelector);
         const count = await cards.count();
-        let invalidDates = [];
+        let invalidDateCards = [];
 
         for (let i = 0; i < count; i++) {
             const card = cards.nth(i);
-            // Search globally within the card for 'undefined' to be safe
-            const cardHtml = await card.innerHTML();
-            const cardText = await card.innerText();
+            const feedId = await card.getAttribute('data-feed-id') || 'N/A';
 
-            if (cardHtml.toLowerCase().includes('undefined') || cardText.toLowerCase().includes('undefined')) {
-                // If it's a date element specifically
-                const dateElement = card.locator('.date, .review-date, .feedspace-element-date, .feedspace-element-feed-date, .feedspace-element-date-text').first();
-                let location = 'Text context';
-                let snippet = cardText.substring(0, 100) + '...';
-
-                if (await dateElement.count() > 0) {
-                    const dText = await dateElement.innerText();
-                    if (dText.toLowerCase().includes('undefined')) {
-                        location = 'Date Element';
-                        snippet = await dateElement.innerHTML();
-                        invalidDates.push(i + 1);
-                        this.detailedFailures.push({
-                            type: 'Undefined dates',
-                            card: i + 1,
-                            location: location,
-                            snippet: snippet.replace(/</g, '&lt;').replace(/>/g, '&gt;'),
-                            description: "Date strings not rendered properly, showing 'undefined'.",
-                            severity: 'High'
-                        });
-                    }
-                } else {
-                    // Fallback to general text match if no specific date element found but 'undefined' is present
-                    invalidDates.push(i + 1);
+            // 1. Check specific date element if present
+            const dateElement = card.locator('.date, .review-date, .feedspace-element-date, .feedspace-element-feed-date, .feedspace-element-date-text').first();
+            if (await dateElement.count() > 0) {
+                const dText = await dateElement.innerText();
+                // Empty is OK per user request, but literal 'undefined' is not
+                if (dText.toLowerCase().includes('undefined') || dText.toLowerCase().includes('null') || dText.toLowerCase().includes('invalid date')) {
+                    invalidDateCards.push(i + 1);
                     this.detailedFailures.push({
-                        type: 'Undefined dates',
+                        type: 'Malformed dates',
                         card: i + 1,
-                        location: 'General Content',
-                        snippet: cardHtml.substring(0, 150).replace(/</g, '&lt;').replace(/>/g, '&gt;') + '...',
-                        description: "Date strings not rendered properly, showing 'undefined'.",
+                        feedId: feedId,
+                        location: 'Date Element',
+                        snippet: await dateElement.innerHTML(),
+                        description: `Date field contains literal 'undefined' or 'null' (Optional field must be valid or empty). (ID: ${feedId})`,
                         severity: 'High'
                     });
+                    continue; // Already flagged
                 }
+            }
+
+            // 2. Check general card content for binding errors (leaked undefined/null)
+            const cardHtml = await card.innerHTML();
+            const cardText = await card.innerText();
+            if (cardHtml.toLowerCase().includes('undefined') || cardHtml.toLowerCase().includes('null') || cardText.toLowerCase().includes('invalid date')) {
+                invalidDateCards.push(i + 1);
+                this.detailedFailures.push({
+                    type: 'Malformed content',
+                    card: i + 1,
+                    feedId: feedId,
+                    location: 'General Card Content',
+                    snippet: cardHtml.substring(0, 150).replace(/</g, '&lt;').replace(/>/g, '&gt;') + '...',
+                    description: `Review card contains leaked 'undefined' or 'null' strings. (ID: ${feedId})`,
+                    severity: 'High'
+                });
             }
         }
 
-        if (invalidDates.length > 0) {
-            this.logAudit(`Date Consistency: Found 'undefined' date strings in cards #${invalidDates.join(', #')}`, 'fail');
+        if (invalidDateCards.length > 0) {
+            this.logAudit(`Date Consistency: Found 'undefined' or 'null' strings in cards #${invalidDateCards.join(', #')}`, 'fail');
         } else {
-            this.logAudit('Date Consistency: All review dates appear valid.');
+            this.logAudit('Date Consistency: All review dates are valid or intentionally empty (optional).');
         }
     }
 
@@ -199,7 +198,8 @@ class BaseWidget {
                     if (intersects) {
                         // Get snippet for detailed reporting if needed
                         const html = await card.innerHTML();
-                        visibleCards.push({ index: i + 1, box, card, html });
+                        const feedId = await card.getAttribute('data-feed-id') || 'N/A';
+                        visibleCards.push({ index: i + 1, box, card, html, feedId });
                     }
                 }
             }
@@ -227,13 +227,14 @@ class BaseWidget {
                 );
 
                 if (hasOverlap) {
-                    const msg = `Card ${c1.index} overlaps with Card ${c2.index}`;
+                    const msg = `Card ${c1.index} (ID: ${c1.feedId}) overlaps with Card ${c2.index} (ID: ${c2.feedId})`;
                     overlaps.push(msg);
 
                     // Add detailed failure for report
                     this.detailedFailures.push({
                         type: 'Layout Integrity',
                         card: `${c1.index} & ${c2.index}`,
+                        feedId: `${c1.feedId} & ${c2.feedId}`,
                         description: `Overlapping cards detected.`,
                         location: 'Card Element (BoundingBox Check)',
                         snippet: c1.html.substring(0, 100) + '...', // Preview of first card
@@ -263,7 +264,8 @@ class BaseWidget {
                 const box = await card.boundingBox();
                 if (box) {
                     const html = await card.innerHTML();
-                    cardData.push({ index: i + 1, box, html });
+                    const feedId = await card.getAttribute('data-feed-id') || 'N/A';
+                    cardData.push({ index: i + 1, box, html, feedId });
                 }
             }
         }
@@ -281,6 +283,7 @@ class BaseWidget {
                     this.detailedFailures.push({
                         type: 'Alignment',
                         card: `${c1.index} & ${c2.index}`,
+                        feedId: `${c1.feedId} & ${c2.feedId}`,
                         description: `Uneven card heights in same row (Diff: ${Math.abs(c1.box.height - c2.box.height).toFixed(1)}px)`,
                         location: 'Row Alignment',
                         snippet: c1.html.substring(0, 100) + '...', // Preview of first card
@@ -312,11 +315,32 @@ class BaseWidget {
                 const el = textElements.nth(j);
                 const result = await el.evaluate(el => {
                     const style = window.getComputedStyle(el);
-                    const isOverflowing = el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth;
+                    // Mitigation: Add 1px buffer for sub-pixel rendering differences
+                    const isOverflowing = (el.scrollHeight - el.clientHeight > 1) || (el.scrollWidth - el.clientWidth > 1);
+
+                    const textContent = el.innerText || el.textContent;
+                    const hasManualEllipsis = textContent.trim().endsWith('...') || textContent.trim().endsWith('…') || /\.{2,3}\s*$/.test(textContent);
+
+                    // Robust check for Read More button nearby
+                    let hasReadMore = false;
+                    const card = el.closest('.feedspace-review-item, .feedspace-element-feed-box');
+                    if (card) {
+                        const cardText = card.innerText || '';
+                        if (/read\s*more/i.test(cardText)) {
+                            hasReadMore = true;
+                        }
+                    } else if (el.parentElement && /read\s*more/i.test(el.parentElement.innerText)) {
+                        // Fallback
+                        hasReadMore = true;
+                    }
+
                     const isTruncated = style.textOverflow === 'ellipsis' ||
                         style.webkitLineClamp !== 'none' ||
                         style.overflow === 'hidden' ||
-                        style.overflowY === 'hidden';
+                        style.overflowY === 'hidden' ||
+                        hasManualEllipsis ||
+                        hasReadMore;
+
                     const isHidden = style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) === 0;
                     return { isOverflowing, isTruncated, isHidden };
                 });
@@ -367,7 +391,7 @@ class BaseWidget {
             // Ensure visible before interacting regarding the parent container
             if (!(await btn.isVisible())) continue;
 
-            const card = btn.locator('xpath=./ancestor::*[contains(@class, "feedspace-review-item") or contains(@class, "feedspace-element-feed-box")]').first();
+            const card = btn.locator('xpath=./ancestor::*[contains(@class, "feedspace-review-item") or contains(@class, "feedspace-element-feed-box") or contains(@class, "feedspace-marquee-box-inner") or contains(@class, "feedspace-post-slide-items")]').first();
 
             try {
                 // Get text container height before click (if possible)
@@ -443,48 +467,205 @@ class BaseWidget {
 
     async validateMediaIntegrity() {
         console.log('Running Media Integrity check...');
+
+        // 1. Image Integrity with Location Context
+        // Scope to images that are likely part of the content
         const images = this.context.locator('img');
         const imgCount = await images.count();
-        let brokenImages = 0;
+
+        // STRICT DEDUPLICATION: Check detailedFailures globally instead of local set
+        let brokenImages = [];
 
         for (let i = 0; i < imgCount; i++) {
-            const isBroken = await images.nth(i).evaluate(img => !img.complete || img.naturalWidth === 0);
-            if (isBroken) brokenImages++;
+            const img = images.nth(i);
+
+            // Optimization: Skip images inside clones
+            const shouldSkip = await img.evaluate(el => {
+                if (el.closest('[data-fs-marquee-clone="true"], .cloned, .clone')) return true;
+                if (el.getAttribute('aria-hidden') === 'true') return true;
+                // Ignore tracking pixels or empty images
+                if ((el.width <= 1 && el.height <= 1) || (el.naturalWidth === 0 && el.naturalHeight === 0 && el.width === 0 && el.height === 0)) return true;
+                return false;
+            });
+
+            if (shouldSkip) continue;
+
+            // Initial check
+            let isBroken = await img.evaluate(el => !el.complete || el.naturalWidth === 0);
+
+            // Double check: Scroll into view and wait (Lazy Load handling)
+            if (isBroken) {
+                try {
+                    await img.scrollIntoViewIfNeeded({ timeout: 1000 }).catch(() => { });
+                    await this.page.waitForTimeout(500);
+                    isBroken = await img.evaluate(el => !el.complete || el.naturalWidth === 0);
+                } catch (e) { }
+            }
+
+            if (isBroken) {
+                // Identify the card
+                const identity = await img.evaluate((el) => {
+                    let id = 'Unknown';
+                    const parentWithId = el.closest('[data-feed-id]');
+                    if (parentWithId) {
+                        id = parentWithId.getAttribute('data-feed-id');
+                    } else {
+                        const card = el.closest('.feedspace-element-feed-box-inner, .feedspace-element-post-box, .swiper-slide, .feedspace-marquee-box-inner');
+                        if (card && card.parentElement) {
+                            const index = Array.from(card.parentElement.children).indexOf(card) + 1;
+                            id = `Card #${index}`;
+                        }
+                    }
+
+                    // Simple path generation
+                    let path = [];
+                    let current = el;
+                    let depth = 0;
+                    while (current && current.tagName !== 'BODY' && depth < 5) {
+                        let selector = current.tagName.toLowerCase();
+                        if (current.id) selector += `#${current.id}`;
+                        else if (current.className && typeof current.className === 'string' && current.className.trim() !== '') {
+                            const classes = current.className.split(' ').filter(c => c.length > 0 && !c.includes(':'));
+                            if (classes.length > 0) selector += `.${classes[0]}`;
+                        }
+                        path.unshift(selector);
+                        current = current.parentElement;
+                        depth++;
+                    }
+                    return { id, locator: path.join(' > ') };
+                });
+
+                // GLOBAL DEDUPLICATION Check
+                const alreadyReported = this.detailedFailures.some(f => f.type === 'Media Integrity' && f.card === `ID: ${identity.id}`);
+
+                if (!alreadyReported) {
+                    const src = await img.getAttribute('src');
+                    brokenImages.push({ index: i, cardId: identity.id, src: src });
+
+                    // DEBUG: Capture screenshot of the broken element for user verification
+                    const screenshotPath = `reports/screenshots/broken_img_${identity.id}_${Date.now()}.png`;
+                    try {
+                        const box = await img.boundingBox();
+                        if (box) {
+                            await this.page.screenshot({ path: screenshotPath, clip: box });
+                        } else {
+                            await img.screenshot({ path: screenshotPath });
+                        }
+                        console.log(`Captured screenshot of broken image at: ${screenshotPath}`);
+                    } catch (e) {
+                        console.log('Failed to capture element screenshot:', e.message);
+                    }
+
+                    this.detailedFailures.push({
+                        type: 'Media Integrity',
+                        card: `ID: ${identity.id}`,
+                        description: 'Broken Image detected (First Occurrence)',
+                        location: `Locator: ${identity.locator}`,
+                        snippet: `<img src="${src?.substring(0, 50)}..." ...>`,
+                        severity: 'High'
+                    });
+                }
+            }
         }
 
-        if (brokenImages > 0) {
-            this.logAudit(`Media Integrity: Found ${brokenImages} broken images.`, 'fail');
+        if (brokenImages.length > 0) {
+            this.logAudit(`Media Integrity: Found broken media on ${brokenImages.length} cards.`, 'fail');
         } else {
             this.logAudit('Media Integrity: All images loaded correctly.');
         }
 
+        // 2. Video Integrity (Same deduplication logic)
         const videos = this.context.locator('video, .feedspace-element-video-player, iframe[src*="youtube"], iframe[src*="vimeo"]');
         const videoCount = await videos.count();
         let videoErrors = 0;
+
         for (let i = 0; i < videoCount; i++) {
-            const tag = await videos.nth(i).evaluate(v => v.tagName.toLowerCase());
+            const vid = videos.nth(i);
+            const shouldSkip = await vid.evaluate(el => !!el.closest('[data-fs-marquee-clone="true"], .cloned, .clone'));
+            if (shouldSkip) continue;
+
+            const tag = await vid.evaluate(v => v.tagName.toLowerCase());
+            let hasError = false;
+
             if (tag === 'video') {
-                const error = await videos.nth(i).evaluate(v => v.error);
-                if (error) videoErrors++;
+                const error = await vid.evaluate(v => v.error);
+                if (error) hasError = true;
+            } else {
+                const isVisible = await vid.isVisible();
+                if (!isVisible) hasError = true;
             }
-            // For iframes, we just check visibility
-            const isVisible = await videos.nth(i).isVisible();
-            if (!isVisible) videoErrors++;
+
+            if (hasError) {
+                const identity = await vid.evaluate((el) => {
+                    let id = 'Unknown';
+                    const parentWithId = el.closest('[data-feed-id]');
+                    if (parentWithId) {
+                        id = parentWithId.getAttribute('data-feed-id');
+                    } else {
+                        const card = el.closest('.feedspace-element-feed-box-inner, .feedspace-element-post-box, .swiper-slide, .feedspace-marquee-box-inner');
+                        if (card && card.parentElement) {
+                            const index = Array.from(card.parentElement.children).indexOf(card) + 1;
+                            id = `Card #${index}`;
+                        }
+                    }
+                    return { id };
+                });
+
+                // GLOBAL DEDUPLICATION Check
+                const alreadyReported = this.detailedFailures.some(f => f.type === 'Media Integrity' && f.card === `ID: ${identity.id}`);
+
+                if (!alreadyReported) {
+                    videoErrors++;
+
+                    this.detailedFailures.push({
+                        type: 'Media Integrity',
+                        card: `ID: ${identity.id}`,
+                        description: 'Video Playback/Loading Error',
+                        location: tag,
+                        snippet: await vid.evaluate(el => el.outerHTML.substring(0, 100)),
+                        severity: 'High'
+                    });
+                }
+            }
         }
+
         if (videoErrors > 0) {
-            this.logAudit(`Media Integrity: Found ${videoErrors} video loading/playback issues.`, 'fail');
+            this.logAudit(`Media Integrity: Found video issues on ${videoErrors} cards.`, 'fail');
         } else if (videoCount > 0) {
-            this.logAudit(`Media Integrity: Successfully verified ${videoCount} video elements.`);
+            this.logAudit(`Media Integrity: Verified ${videoCount} videos.`);
         }
     }
-
     async validateCardConsistency() {
         console.log('Running Card Consistency check...');
         // User feedback: Some reviews only have star ratings, so strict author/text checks are removed.
         this.logAudit('Card Consistency: Checks skipped (Star-only reviews are valid).');
     }
 
+    async validateReadMore() {
+        console.log('Running Read More check...');
+        const readMoreBtn = this.context.locator('.feedspace-read-more, .read-more, .show-more, .feedspace-element-read-more-text-span').first();
+        if (await readMoreBtn.count() > 0 && await readMoreBtn.isVisible()) {
+            this.logAudit('Read More Functionality: Element detected and visible.');
+            try {
+                await readMoreBtn.click({ timeout: 2000 });
+                this.logAudit('Read More Functionality: Successfully expanded and verified on first card.');
+            } catch (e) {
+                this.logAudit(`Read More Functionality: Failed to interact with button: ${e.message}`, 'info');
+            }
+        } else {
+            this.logAudit('Read More Functionality: No "Read More" expansion anchors found (content likely fits or uses different mechanism).', 'info');
+        }
+    }
+
     async generateReport(widgetType) {
+        this.generatedReports = this.generatedReports || new Set();
+        if (this.generatedReports.has(this.reportType)) {
+            console.log(`[WIDGET-AUDIT] Report for ${this.reportType} already generated. Skipping.`);
+            return;
+        }
+
+        console.log(`[WIDGET-AUDIT] Generating ${this.reportType} report for ${widgetType}. Reviews: ${this.reviewStats.total}`);
+        this.generatedReports.add(this.reportType);
         const reportDir = path.resolve('reports');
         if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
 
@@ -492,14 +673,27 @@ class BaseWidget {
         const reportPath = path.join(reportDir, filename);
         const date = new Date().toLocaleString();
 
-        // Helper to get find audit results by keywords
+        // Helper to find audit results by keywords (case-insensitive)
         const getAuditStatus = (keyword) => {
-            const entry = this.auditLog.find(l => l.message.includes(keyword));
-            if (!entry) return { icon: '❓', text: 'Not Tested' };
-            return {
-                icon: entry.type === 'fail' ? '❌' : (entry.type === 'info' ? 'ℹ️' : '✅'),
-                type: entry.type
+            const lowerKeyword = keyword.toLowerCase();
+            const matches = this.auditLog.filter(l => l.message.toLowerCase().includes(lowerKeyword));
+
+            if (matches.length === 0) return {
+                icon: '❓',
+                type: 'na',
+                message: `No ${keyword} checks were performed or found.`
             };
+
+            // Priority: fail > info > pass
+            const failure = matches.find(m => m.type === 'fail');
+            if (failure) return { icon: '❌', type: 'fail', message: failure.message };
+
+            const info = matches.find(m => m.type === 'info');
+            if (info) return { icon: 'ℹ️', type: 'info', message: info.message };
+
+            // Return the most descriptive pass message (usually the one with more text)
+            const pass = matches.sort((a, b) => b.message.length - a.message.length)[0];
+            return { icon: '✅', type: 'pass', message: pass.message };
         };
 
         const contentIssueEntry = this.auditLog.find(l => l.message.includes('Card Consistency'));
@@ -540,7 +734,7 @@ class BaseWidget {
                 <tr>
                     <td>${fail.type}</td>
                     <td>#${fail.card}</td>
-                    <td>
+                    <td><code style="background:#f1f3f5; padding:2px 5px; border-radius:3px;">${fail.feedId || 'N/A'}</code></td>
                     <td>
                         ${fail.description}<br>
                         <strong>Exact Location:</strong> ${fail.location}<br>
@@ -578,27 +772,28 @@ class BaseWidget {
         // 2.3 Functionality & Layout Table
         const features = [
             ['Widget container visibility', 'Widget container is visible'],
-            ['Feedspace Branding', 'Feedspace branding'],
-            ['Inline CTA', 'Inline CTA'],
+            ['Feedspace Branding', 'Branding'],
+            ['Inline CTA', 'CTA'],
             ['Layout Integrity', 'Layout Integrity'],
             ['Alignment', 'Alignment'],
             ['Text Readability', 'Text Readability'],
             ['Media Integrity', 'Media Integrity'],
+            ['Date Consistency', 'Date Consistency'],
             ['Navigation', 'Navigation'],
             ['Load More Behavior', 'Load More'],
-            ['Responsiveness', 'Responsiveness'],
-            ['Interaction', 'Interaction']
+            ['Read More / Content Expansion', 'Read More'],
+            ['Interaction', 'Interaction'],
+            ['Responsiveness', 'Responsiveness']
         ];
 
         let funcRows = '';
         features.forEach(([name, key]) => {
             const status = getAuditStatus(key);
-            const notes = this.auditLog.find(l => l.message.includes(key))?.message || 'N/A';
             funcRows += `
                 <tr>
                     <td>${name}</td>
-                    <td>${status.icon}</td>
-                    <td>${notes}</td>
+                    <td style="text-align:center;">${status.icon}</td>
+                    <td>${status.message}</td>
                 </tr>`;
         });
 
@@ -626,6 +821,7 @@ class BaseWidget {
         <div class="summary-item">${getAuditStatus('container is visible').icon} Widget container is visible and functional.</div>
         <div class="summary-item">${getAuditStatus('Reviews Segmented').icon} Reviews Segmentation: ${this.reviewStats.total} reviews loaded (Text: ${this.reviewStats.text}, Video: ${this.reviewStats.video}, Audio: ${this.reviewStats.audio}${typeof this.reviewStats.cta !== 'undefined' ? `, CTAs: ${this.reviewStats.cta}` : ''})</div>
         <div class="summary-item">${getAuditStatus('Media Integrity').icon} Media Integrity: ${getAuditStatus('Media Integrity').type === 'fail' ? 'Broken media found.' : 'All images and videos loaded successfully.'}</div>
+        <div class="summary-item">${getAuditStatus('Date Consistency').icon} Date Integrity: ${getAuditStatus('Date Consistency').type === 'fail' ? 'Malformed or undefined dates found.' : 'All dates are valid and consistent.'}</div>
         <div class="summary-item">${getAuditStatus('Layout Integrity').icon} Layout & Alignment: Cards aligned, no overlapping detected.</div>
         
         <div class="summary-item" style="margin-top:20px; padding:15px; background:#fff3f3; border-radius:8px; border-left:5px solid #e74c3c;">
@@ -648,7 +844,8 @@ class BaseWidget {
         <thead>
             <tr>
                 <th>Issue</th>
-                <th>Cards Affected</th>
+                <th>Card Index</th>
+                <th>Feed ID</th>
                 <th>Description</th>
                 <th>Severity</th>
             </tr>

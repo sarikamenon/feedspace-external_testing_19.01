@@ -11,6 +11,9 @@ Feature: Embedded Web Widget Testing
     And the widget should be visible and contain at least 1 reviews
     And the widget should follow the layout and branding guidelines
     And I perform a comprehensive UI audit
+    And I save the intermediate report for "DetectedWidget"
+    When I reload the widget page
+    Then I verify widget responsiveness on mobile
     And I generate the final UI audit report for "DetectedWidget"
 
   @WidgetTest

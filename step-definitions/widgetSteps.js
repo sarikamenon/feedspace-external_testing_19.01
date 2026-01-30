@@ -92,25 +92,18 @@ Then('I perform a comprehensive UI audit', async function () {
     await this.currentWidget.validateTextReadability();
     await this.currentWidget.runAccessibilityAudit();
     await this.currentWidget.validateMediaIntegrity();
-    await this.currentWidget.validateReadMore(); // New check
+    await this.currentWidget.validateReadMore();
     await this.currentWidget.validateCardConsistency();
 
     if (typeof this.currentWidget.validateUniqueBehaviors === 'function') {
         await this.currentWidget.validateUniqueBehaviors();
     }
 
-    // Log Desktop responsiveness log removed as per user request (only Mobile required)
-    // this.currentWidget.logAudit('Responsiveness: Validated layout for Desktop (Default Viewport).');
-
-    // Generate Browser report BEFORE switching to Mobile
-    const widgetType = this.currentWidget.constructor.name.replace('Widget', '');
-    await this.currentWidget.generateReport(widgetType);
-
-    await this.currentWidget.validateResponsiveness('Mobile');
-
+    // DO NOT throw errors here - let the test continue to mobile testing
+    // Errors will be thrown at the final report generation step
     const failures = this.currentWidget.auditLog.filter(l => l.type === 'fail');
     if (failures.length > 0) {
-        throw new Error(`Comprehensive Audit Failed with ${failures.length} issues. Check report for details.`);
+        console.log(`[AUDIT] Found ${failures.length} failures, but continuing to mobile testing...`);
     }
 });
 
@@ -156,9 +149,24 @@ Then('verify that broken media is reported as an error', async function () {
     expect(failures).toHaveLength(0);
 });
 
+Then('I save the intermediate report for {string}', async function (widgetType) {
+    const reportName = (widgetType === 'DetectedWidget' || widgetType === 'Auto')
+        ? this.currentWidget.constructor.name.replace('Widget', '')
+        : widgetType;
+
+    // Generate but DO NOT throw error yet (similar to individual flow)
+    await this.currentWidget.generateReport(reportName);
+});
+
 Then('I generate the final UI audit report for {string}', async function (widgetType) {
     const finalReportName = (widgetType === 'DetectedWidget' || widgetType === 'Auto')
         ? this.currentWidget.constructor.name.replace('Widget', '')
         : widgetType;
     await this.currentWidget.generateReport(finalReportName);
+
+    // Fail the test if there were any failures logged (similar to individual flow)
+    const failures = this.currentWidget.auditLog.filter(l => l.type === 'fail');
+    if (failures.length > 0) {
+        throw new Error(`Widget Audit Failed for ${finalReportName} with ${failures.length} issues. Check report for details.`);
+    }
 });

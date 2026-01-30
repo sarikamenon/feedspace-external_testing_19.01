@@ -1,11 +1,11 @@
 {
     "page": {
-        "url": "https://www.feedspace.io/widget/b8e1c19e-2550-4a58-ae58-d7708c3e3405?info=1",
         "timeout": 30000
     },
     "widgets": [
         {
             "type": "Carousel",
+            "url": "https://www.feedspace.io/widget/82952133-2df1-402b-b47f-8d07c928cc3d?info=1",
             "uiRules": {
                 "minReviews": 1,
                 "hasNavigation": true,
@@ -14,6 +14,7 @@
         },
         {
             "type": "Masonry",
+            "url": "https://www.feedspace.io/widget/71c1fd6a-8f9b-49e2-aa79-5b421c2561e3?info=1",
             "uiRules": {
                 "minReviews": 1,
                 "hasLoadMore": true,
@@ -22,6 +23,7 @@
         },
         {
             "type": "StripSlider",
+            "url": "https://www.feedspace.io/widget/7ce30851-47f6-4bbb-8678-af202cfcef39?info=1",
             "uiRules": {
                 "minReviews": 1,
                 "autoScroll": true
@@ -29,13 +31,16 @@
         },
         {
             "type": "AvatarGroup",
+            "url": "https://www.feedspace.io/widget/5bba8321-a33f-44b4-b47b-79e715e90f2e?info=1",
             "uiRules": {
                 "minAvatars": 1,
-                "hasNavigation": false
+                "hasNavigation": false,
+                "interactive": true
             }
         },
         {
             "type": "AvatarSlider",
+            "url": "https://www.feedspace.io/widget/b8e1c19e-2550-4a58-ae58-d7708c3e3405?info=1",
             "uiRules": {
                 "minReviews": 1,
                 "hasNavigation": true
