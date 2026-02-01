@@ -179,12 +179,22 @@ class WallOfLovePage {
         this.logAudit('Media Handling: All media elements verified as functional.');
     }
 
-    async generateHTMLAuditReport() {
+    async simulateMediaFailures() {
+        console.log('Simulating media loading failures...');
+        await this.page.route('**/*.{png,jpg,jpeg,svg,mp4,mp3}', route => route.abort('failed'));
+        this.logAudit('Media Failure Simulation: Enabled (blocking images and media).', 'info');
+    }
+
+    async generateHTMLAuditReport(customLog = null, customStats = null, customA11y = null) {
         const fs = require('fs');
         const path = require('path');
-        const filename = this.reportType === 'Mobile' ? 'UI_UX_Audit_Report_Mobile.html' : 'UI_UX_Audit_Report.html';
+        const filename = this.reportType === 'Mobile' ? 'WOL_Mobile_Audit_Report.html' : 'WOL_Audit_Report.html';
         const reportPath = path.resolve(`reports/${filename}`);
         const date = new Date().toLocaleString();
+
+        const auditLogToUse = customLog || this.auditLog;
+        const statsToUse = customStats || this.reviewStats;
+        const a11yToUse = customA11y || this.accessibilityResults;
 
         const styles = `
             body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f4f7f6; }
@@ -221,10 +231,17 @@ class WallOfLovePage {
 
         let auditListHtml = '';
         let everythingPassed = true;
-        this.auditLog.forEach(item => {
-            const icon = item.type === 'pass' ? '✅' : (item.type === 'info' ? 'ℹ️' : '❌');
-            if (item.type === 'fail') everythingPassed = false;
-            auditListHtml += `<li>${icon} ${item.message}</li>`;
+
+        // De-duplicate log messages
+        const uniqueMessages = new Set();
+        auditLogToUse.forEach(item => {
+            const key = `${item.type}|${item.message}`;
+            if (!uniqueMessages.has(key)) {
+                uniqueMessages.add(key);
+                const icon = item.type === 'pass' ? '✅' : (item.type === 'info' ? 'ℹ️' : '❌');
+                if (item.type === 'fail') everythingPassed = false;
+                auditListHtml += `<li>${icon} ${item.message}</li>`;
+            }
         });
 
         const overallStatus = everythingPassed ? 'VERIFIED' : 'ISSUES FOUND';
@@ -235,7 +252,7 @@ class WallOfLovePage {
         let a11yClass = 'status-pass';
 
         let totalViolations = 0;
-        this.accessibilityResults.forEach(res => {
+        a11yToUse.forEach(res => {
             if (res.type === this.reportType) {
                 totalViolations += res.violations.length;
                 res.violations.forEach(v => {
@@ -295,27 +312,27 @@ class WallOfLovePage {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>UI/UX Audit Report - ${this.reportType}</title>
+    <title>WOL Audit Report - ${this.reportType}</title>
     <style>${styles}</style>
 </head>
 <body>
-    <h1>UI / UX Testing Report - ${this.reportType} View</h1>
+    <h1>WOL Audit Report - ${this.reportType} View</h1>
     
     <div class="summary-grid">
         <div class="metric-card">
-            <span class="metric-value">${this.reviewStats.total}</span>
+            <span class="metric-value">${statsToUse.total}</span>
             <span class="metric-label">Total Reviews</span>
         </div>
         <div class="metric-card">
-            <span class="metric-value">${this.reviewStats.text}</span>
+            <span class="metric-value">${statsToUse.text}</span>
             <span class="metric-label">Text Reviews</span>
         </div>
         <div class="metric-card">
-            <span class="metric-value">${this.reviewStats.video}</span>
+            <span class="metric-value">${statsToUse.video}</span>
             <span class="metric-label">Video Reviews</span>
         </div>
         <div class="metric-card">
-            <span class="metric-value">${this.reviewStats.audio}</span>
+            <span class="metric-value">${statsToUse.audio}</span>
             <span class="metric-label">Audio Reviews</span>
         </div>
     </div>

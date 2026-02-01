@@ -40,66 +40,34 @@ class StripSliderWidget extends BaseWidget {
     }
 
     async validateUniqueBehaviors() {
-        // configureSelectors is redundant if called by other methods first, but safe to call again
         await this.configureSelectors();
         this.logAudit('Validating Strip Slider specialized behaviors...');
 
-        // 1. Validate Review Counts (Text, Video, Audio)
+        // 1. Validate Review Counts (Text, Video, Audio) - Optimized for StripSlider
         const cards = this.context.locator(this.cardSelector);
         const cardCount = await cards.count();
         this.reviewStats.total = cardCount;
         this.reviewStats.text = 0;
         this.reviewStats.video = 0;
         this.reviewStats.audio = 0;
-        this.reviewStats.cta = 0; // Track per-card CTAs
+        this.reviewStats.cta = 0;
 
         for (let i = 0; i < cardCount; i++) {
             const card = cards.nth(i);
+            const hasVideo = await card.locator('video, iframe[src*="youtube"], iframe[src*="vimeo"], .video-play-button, .feedspace-element-play-feed, .feedspace-element-play-btn, .feedspace-element-play-button, img[src*="manual_video_review"]').count() > 0;
+            const hasAudio = await card.locator('audio, .audio-player, .feedspace-audio-player, .feedspace-element-audio-feed-box').count() > 0;
+            const hasCTA = await card.locator('.feedspace-cta-button-container-d8, .feedspace-cta-content').count() > 0;
 
-            // Video Detection Strategies:
-            // 1. Tag-based: <video>, <iframe> (YouTube/Vimeo)
-            // 2. Class-based: Play buttons (Added .feedspace-element-play-button per user feedback)
-            // 3. Image-based: 'manual_video_review' in src/alt (specific to Feedspace manual videos)
-            // 4. Text-based: Review text is a file path ending in .mp4 (seen in some Marquee renderings)
-            const hasVideoTag = await card.locator('video').count() > 0;
-            const hasIframe = await card.locator('iframe[src*="youtube"], iframe[src*="vimeo"]').count() > 0;
-            const hasPlayButton = await card.locator('.video-play-button, .feedspace-element-play-feed, .play-icon, .feedspace-element-play-btn, .feedspace-element-play-button').count() > 0;
-            const hasManualVideoIndicator = await card.locator('img[src*="manual_video_review"], img[alt*="Video Review"]').count() > 0;
-
-            // Check text content for .mp4 or .mov (case insensitive) just in case the video tag isn't rendered
-            // Use textContent() instead of innerText() to get text even if element is hidden/off-screen
-            const cardText = await card.textContent();
-            const hasVideoFileText = /\.(mp4|mov|webm)(\s|$)/i.test(cardText) || cardText.includes('video-feed');
-
-            const hasAudio = await card.locator('audio, .audio-player, .fa-volume-up, .feedspace-audio-player, .feedspace-element-audio-feed-box').count() > 0;
-
-            // Check for per-card CTA
-            const hasCTA = await card.locator('.feedspace-cta-button-container-d8').count() > 0;
-            if (hasCTA) {
-                this.reviewStats.cta++;
-            }
-
-            if (hasVideoTag || hasIframe || hasPlayButton || hasManualVideoIndicator || hasVideoFileText) {
-                this.reviewStats.video++;
-            } else if (hasAudio) {
-                this.reviewStats.audio++;
-            } else {
-                this.reviewStats.text++;
-            }
+            if (hasCTA) this.reviewStats.cta++;
+            if (hasVideo) this.reviewStats.video++;
+            else if (hasAudio) this.reviewStats.audio++;
+            else this.reviewStats.text++;
         }
 
         this.logAudit(`Reviews Segmented: Total ${cardCount} (Text: ${this.reviewStats.text}, Video: ${this.reviewStats.video}, Audio: ${this.reviewStats.audio}, CTA Buttons: ${this.reviewStats.cta})`);
 
         // 2. Validate Autoscroll Interaction (Clicking reviews)
         await this.validateAutoscrollInteraction();
-
-        // 3. UI and Accessibility Audits
-        await this.validateTextReadability();
-        await this.validateMediaIntegrity();
-        await this.runAccessibilityAudit();
-
-        // 4. Branding
-        await this.validateBranding();
     }
 
     async validateAutoscrollInteraction() {

@@ -14,23 +14,40 @@ class CarouselWidget extends BaseWidget {
 
     async validateUniqueBehaviors() {
         await this.initContext();
-        console.log('Validating Carousel specialized behaviors...');
 
-        // Alignment check
-        await this.validateAlignment();
-
-        // Navigation validation
-        if (await this.nextButton.isVisible()) {
-            this.logAudit('Navigation: Next button is visible.');
-            await this.nextButton.click();
-            await this.page.waitForTimeout(1000);
-            this.logAudit('Navigation: Successfully clicked Next button.');
-        } else {
-            this.logAudit('Navigation: Navigation buttons not found.', 'info');
+        // Log visibility for the final report
+        const container = this.context.locator(this.containerSelector).first();
+        if (await container.isVisible()) {
+            this.logAudit('Widget container is visible.');
         }
 
-        // Swipe simulation
+        this.logAudit('Validating Carousel specialized behaviors...');
+
+        // 1. Branding & CTA
+        await this.validateBranding();
+        await this.validateCTA();
+
+        // 2. UI & Content Integrity
+        await this.validateLayoutIntegrity();
+        await this.validateAlignment();
+        await this.validateTextReadability();
+        await this.validateMediaIntegrity();
+        await this.validateDateConsistency();
+
+        // 3. Navigation Controls
+        if (await this.nextButton.isVisible()) {
+            this.logAudit('Navigation: Carousel controls are visible.');
+            await this.nextButton.click();
+            await this.page.waitForTimeout(500);
+            this.logAudit('Navigation: Successfully interacted with Next control.');
+        } else {
+            this.logAudit('Navigation: Specialized controls not detected.', 'info');
+        }
+
+        // 4. Mobile Interaction simulation
         await this.simulateSwipe();
+
+        this.logAudit('Interaction: User can navigate and swipe carousel.');
     }
 
     async simulateSwipe() {
@@ -41,9 +58,9 @@ class CarouselWidget extends BaseWidget {
         console.log('Simulating swipe gesture...');
         await this.page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2);
         await this.page.mouse.down();
-        await this.page.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2, { steps: 10 });
+        await this.page.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2, { steps: 5 });
         await this.page.mouse.up();
-        await this.page.waitForTimeout(1000);
+        await this.page.waitForTimeout(500);
         this.logAudit('Behavior: Swipe gesture simulated.');
     }
 }

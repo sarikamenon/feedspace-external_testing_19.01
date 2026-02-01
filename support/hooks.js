@@ -16,6 +16,15 @@ AfterAll(async function () {
 });
 
 Before(async function () {
+    // Close any existing page/context from previous scenario (defensive cleanup)
+    if (page && !page.isClosed()) {
+        await page.close().catch(() => { });
+    }
+    if (context) {
+        await context.close().catch(() => { });
+    }
+
+    // Create fresh context and page for this scenario
     context = await browser.newContext();
     page = await context.newPage();
     this.page = page; // Attach page to the World instance so steps can access it

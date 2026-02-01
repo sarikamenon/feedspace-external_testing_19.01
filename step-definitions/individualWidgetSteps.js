@@ -10,6 +10,10 @@ Given('I initiate testing for {string} widget', async function (widgetType) {
     console.log(`\n[Individual Test] Initiating for: ${widgetType}`);
     this.currentPlatform = 'Browser'; // Default platform
 
+    // Reset module-level variables to ensure fresh widget instance for each scenario
+    currentWidget = null;
+    currentWidgetType = null;
+
     // Find config for this specific type
     const widgetData = individualConfig.widgets.find(w => w.type === widgetType);
     if (!widgetData) {
