@@ -1,5 +1,6 @@
 const { expect } = require('@playwright/test');
 const fs = require('fs');
+const path = require('path');
 
 class MediaPage {
     constructor(page) {
@@ -62,8 +63,9 @@ class MediaPage {
 
     // Step 2: Upload the media file (interacting with the popup)
     async uploadMedia(filePath) {
-        if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
-        console.log(`Uploading media: ${filePath}`);
+        const absolutePath = path.resolve(filePath);
+        if (!fs.existsSync(absolutePath)) throw new Error(`File not found: ${absolutePath}`);
+        console.log(`Uploading media: ${absolutePath}`);
 
         try {
             // Logic adapted from SCN004 (TextReviewPage) but using 'Upload Video/Audio' button
@@ -76,7 +78,7 @@ class MediaPage {
             await this.uploadVideoAudioBtn.click(); // Click the main upload button directly
 
             const fileChooser = await fileChooserPromise;
-            await fileChooser.setFiles(filePath);
+            await fileChooser.setFiles(absolutePath);
 
             console.log('Media file set via file chooser.');
 
@@ -90,7 +92,7 @@ class MediaPage {
             // Fallback: Setting on file input directly if button interaction fails
             if (await this.fileUploadInput.count() > 0) {
                 console.log('Fallback: Setting files on hidden input...');
-                await this.fileUploadInput.setInputFiles(filePath);
+                await this.fileUploadInput.setInputFiles(absolutePath);
             } else {
                 throw e;
             }
@@ -98,15 +100,16 @@ class MediaPage {
     }
 
     async uploadAudio(filePath) {
-        if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
-        console.log(`Uploading audio: ${filePath}`);
+        const absolutePath = path.resolve(filePath);
+        if (!fs.existsSync(absolutePath)) throw new Error(`File not found: ${absolutePath}`);
+        console.log(`Uploading audio: ${absolutePath}`);
 
         try {
             const fileChooserPromise = this.page.waitForEvent('filechooser', { timeout: 15000 });
             // Click #upload-file directly as per user requirement
             await this.uploadAudioBtn.click();
             const fileChooser = await fileChooserPromise;
-            await fileChooser.setFiles(filePath);
+            await fileChooser.setFiles(absolutePath);
             console.log('Audio file set via file chooser.');
             await this.page.waitForTimeout(5000);
         } catch (e) {
@@ -116,7 +119,7 @@ class MediaPage {
             // Fallback
             if (await this.fileUploadInput.count() > 0) {
                 console.log('Fallback: Setting files on hidden input...');
-                await this.fileUploadInput.setInputFiles(filePath);
+                await this.fileUploadInput.setInputFiles(absolutePath);
             } else {
                 throw e;
             }

@@ -1,4 +1,4 @@
-name: Daily Automated Tests
+name: Form Functionality Tests
 
 on:
   schedule:

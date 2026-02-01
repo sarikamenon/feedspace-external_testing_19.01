@@ -9,7 +9,7 @@
             "user": {
                 "name": "John Doe",
                 "contact": "1234567890",
-                "photo": "C:\\Playwright\\Playwright-BDDCucumber-POM-15.01-External Testing\\media\\sample_image.jpg"
+                "photo": "media/sample_image.jpg"
             },
             "expected": {
                 "successMessage": "Your testimonial has been successfully submitted."
@@ -50,7 +50,7 @@
             "url": "https://www.feedspace.io/u/2nL5ykR",
             "type": "mediaUploadValidation",
             "reviewText": "Media uploaded",
-            "mediaPhoto": "C:\\Playwright\\Playwright-BDDCucumber-POM-15.01-External Testing\\media\\sample_image1.jpg",
+            "mediaPhoto": "media/sample_image1.jpg",
             "user": {
                 "name": "Lucy David",
                 "contact": "1234567890"
@@ -97,7 +97,7 @@
             "type": "mediaVideoValidation",
             "media": {
                 "fileType": "video",
-                "filePath": "C:\\Playwright\\Playwright-BDDCucumber-POM-15.01-External Testing\\media\\valid_video.mp4"
+                "filePath": "media/valid_video.mp4"
             },
             "user": {
                 "name": "John Doe",
@@ -114,7 +114,7 @@
             "type": "mediaVideoValidation",
             "media": {
                 "fileType": "video",
-                "filePath": "C:\\Playwright\\Playwright-BDDCucumber-POM-15.01-External Testing\\media\\long_video.mp4"
+                "filePath": "media/long_video.mp4"
             },
             "user": {
                 "name": "John Doe",
@@ -132,7 +132,7 @@
             "reviewText": "Testing image upload",
             "media": {
                 "fileType": "image",
-                "filePath": "C:\\Playwright\\Playwright-BDDCucumber-POM-15.01-External Testing\\media\\sample_image.jpg"
+                "filePath": "media/sample_image.jpg"
             },
             "user": {
                 "name": "John Doe",
@@ -150,7 +150,7 @@
             "reviewText": "Testing audio upload",
             "media": {
                 "fileType": "audio",
-                "filePath": "C:\\Playwright\\Playwright-BDDCucumber-POM-15.01-External Testing\\media\\audio.mp3"
+                "filePath": "media/audio.mp3"
             },
             "user": {
                 "name": "John Doe",
@@ -168,7 +168,7 @@
             "reviewText": "Testing audio upload",
             "media": {
                 "fileType": "audio",
-                "filePath": "C:\\Playwright\\Playwright-BDDCucumber-POM-15.01-External Testing\\media\\audio.mp3"
+                "filePath": "media/audio.mp3"
             },
             "user": {
                 "name": "David Doe",
