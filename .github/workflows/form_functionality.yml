@@ -33,3 +33,21 @@ jobs:
       if: always()
       run: npx cucumber-js features/media_upload.feature
       continue-on-error: true
+
+    - name: Upload Form Test Reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: form-functionality-reports
+        path: reports/
+        retention-days: 30
+
+    - name: Upload Form Test Screenshots
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: form-functionality-screenshots
+        path: reports/screenshots/
+        retention-days: 30
+        if-no-files-found: ignore
+

@@ -34,19 +34,20 @@ jobs:
       run: npx cucumber-js features/widgets.feature
       continue-on-error: true
 
-    - name: Upload Test Reports
+    - name: Upload UI Test Reports
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: test-reports
+        name: ui-test-reports
         path: reports/
         retention-days: 30
 
-    - name: Upload Screenshots
+    - name: Upload UI Test Screenshots
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: test-screenshots
+        name: ui-test-screenshots
         path: reports/screenshots/
         retention-days: 30
         if-no-files-found: ignore
+
