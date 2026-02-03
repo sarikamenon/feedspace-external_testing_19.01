@@ -25,6 +25,11 @@ jobs:
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps
 
+    - name: Create Reports Directory
+      run: |
+        New-Item -ItemType Directory -Force -Path reports
+        New-Item -ItemType Directory -Force -Path reports/screenshots
+
     - name: Run Text Review Feature
       run: npx cucumber-js features/text_review.feature
       continue-on-error: true
@@ -33,6 +38,12 @@ jobs:
       if: always()
       run: npx cucumber-js features/media_upload.feature
       continue-on-error: true
+
+    - name: Verify Reports Generated
+      if: always()
+      run: |
+        Write-Host "Checking reports directory contents:"
+        Get-ChildItem -Path reports -Recurse | Select-Object FullName, Length
 
     - name: Upload Form Test Reports
       if: always()
