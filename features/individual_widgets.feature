@@ -86,3 +86,26 @@ Feature: Individual Widget Validation (Dedicated)
     And I verify AvatarSlider branding is displayed and clickable
     And individual verify widget responsiveness on mobile
     And I generate the individual final UI audit report for "AvatarSlider"
+
+  @Individual_VerticalScroll
+  Scenario: Validate VerticalScroll Widget Comprehensive Compliance
+    Given I initiate testing for "VerticalScroll" widget
+    Then the individual framework detects "VerticalScroll"
+    And the individual widget should be visible with valid reviews
+    And I verify VerticalScroll scrolling behavior is smooth and continuous
+    And I verify VerticalScroll media loads and plays correctly
+    And I verify VerticalScroll Read More/Read Less functionality
+    And I verify VerticalScroll review counts and classifications match
+    And individual verify that no review dates are undefined
+    And individual verify that review text is not overflowing
+    And individual verify optional UI elements if present
+    And I verify individual widget-specific behaviors for "VerticalScroll"
+    And individual user performs generic accessibility audit
+    And individual verify that broken media is reported as an error
+    And individual user validates structural integrity of the widget
+    And I save the intermediate individual report for "VerticalScroll"
+    When I reload the widget page
+    Then the individual framework detects "VerticalScroll"
+    And I verify VerticalScroll review counts and classifications match
+    And individual verify widget responsiveness on mobile
+    And I generate the individual final UI audit report for "VerticalScroll"

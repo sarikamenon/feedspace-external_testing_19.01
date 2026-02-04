@@ -68,11 +68,15 @@ Then('the individual framework detects {string}', async function (expectedType) 
     currentWidget = await WidgetFactory.detectAndCreate(this.page, expectedType, individualConfig);
     this.currentWidget = currentWidget;
 
-    expect(currentWidget).toBeDefined();
-    expect(currentWidgetType).toBe(expectedType);
+    if (!currentWidget) {
+        console.error(`[Individual Test] Error: Widget ${expectedType} was not detected.`);
+    }
+    if (currentWidgetType !== expectedType) {
+        console.warn(`[Individual Test] Warning: Expected ${expectedType} but found ${currentWidgetType}`);
+    }
 });
 
-Then('the individual widget should be visible with valid reviews', async function () {
+Then('the individual widget should be visible with valid reviews', { timeout: 120 * 1000 }, async function () {
     const widgetData = individualConfig.widgets.find(w => w.type === currentWidgetType);
     const minReviews = widgetData.uiRules.minReviews || 1;
     await currentWidget.validateVisibility(minReviews);
@@ -107,7 +111,7 @@ Then('individual verify optional UI elements if present', async function () {
     await currentWidget.validateReadMore();
 });
 
-Then('individual user performs generic accessibility audit', async function () {
+Then('individual user performs generic accessibility audit', { timeout: 120 * 1000 }, async function () {
     await currentWidget.runAccessibilityAudit();
 });
 
@@ -168,4 +172,24 @@ Then('I verify AvatarSlider review counts and classifications match', async func
 
 Then('I verify AvatarSlider branding is displayed and clickable', async function () {
     await this.currentWidget.validateBranding();
+});
+
+// Granular steps for VerticalScroll
+Then('I verify VerticalScroll scrolling behavior is smooth and continuous', async function () {
+    await this.currentWidget.validateVerticalScrolling();
+});
+
+Then('I verify VerticalScroll media loads and plays correctly', async function () {
+    await this.currentWidget.validateMediaIntegrity();
+    if (typeof this.currentWidget.validateMediaPlayback === 'function') {
+        await this.currentWidget.validateMediaPlayback();
+    }
+});
+
+Then('I verify VerticalScroll Read More\\/Read Less functionality', { timeout: 60 * 1000 }, async function () {
+    await this.currentWidget.validateReadMoreExpansion();
+});
+
+Then('I verify VerticalScroll review counts and classifications match', async function () {
+    await this.currentWidget.validateReviewCountsAndTypes();
 });

@@ -45,6 +45,14 @@
                 "minReviews": 1,
                 "hasNavigation": true
             }
+        },
+        {
+            "type": "VerticalScroll",
+            "url": "https://www.feedspace.io/widget/9828d757-363c-4547-9cf1-d1e481f9d59c?info=1",
+            "uiRules": {
+                "minReviews": 1,
+                "hasVerticalScroll": true
+            }
         }
     ]
 }

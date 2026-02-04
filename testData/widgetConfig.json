@@ -1,9 +1,16 @@
 {
     "page": {
-        "url": "https://www.feedspace.io/widget/b8e1c19e-2550-4a58-ae58-d7708c3e3405?info=1",
+        "url": "https://www.feedspace.io/widget/9828d757-363c-4547-9cf1-d1e481f9d59c?info=1",
         "timeout": 30000
     },
     "widgets": [
+        {
+            "type": "VerticalScroll",
+            "uiRules": {
+                "minReviews": 1,
+                "hasVerticalScroll": true
+            }
+        },
         {
             "type": "Carousel",
             "uiRules": {
