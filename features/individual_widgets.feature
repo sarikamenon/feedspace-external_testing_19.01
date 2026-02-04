@@ -108,4 +108,26 @@ Feature: Individual Widget Validation (Dedicated)
     Then the individual framework detects "VerticalScroll"
     And I verify VerticalScroll review counts and classifications match
     And individual verify widget responsiveness on mobile
-    And I generate the individual final UI audit report for "VerticalScroll"
+
+  @Individual_HorizontalScroll
+  Scenario: Validate HorizontalScroll Widget Comprehensive Compliance
+    Given I initiate testing for "HorizontalScroll" widget
+    Then the individual framework detects "HorizontalScroll"
+    And the individual widget should be visible with valid reviews
+    And I verify HorizontalScroll scrolling behavior is smooth and continuous
+    And I verify HorizontalScroll media loads and plays correctly
+    And I verify HorizontalScroll Read More/Read Less functionality
+    And I verify HorizontalScroll review counts and classifications match
+    And individual verify that no review dates are undefined
+    And individual verify that review text is not overflowing
+    And individual verify optional UI elements if present
+    And I verify individual widget-specific behaviors for "HorizontalScroll"
+    And individual user performs generic accessibility audit
+    And individual verify that broken media is reported as an error
+    And individual user validates structural integrity of the widget
+    And I save the intermediate individual report for "HorizontalScroll"
+    When I reload the widget page
+    Then the individual framework detects "HorizontalScroll"
+    And I verify HorizontalScroll review counts and classifications match
+    And individual verify widget responsiveness on mobile
+    And I generate the individual final UI audit report for "HorizontalScroll"

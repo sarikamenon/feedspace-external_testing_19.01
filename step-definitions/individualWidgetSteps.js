@@ -190,6 +190,20 @@ Then('I verify VerticalScroll Read More\\/Read Less functionality', { timeout: 6
     await this.currentWidget.validateReadMoreExpansion();
 });
 
-Then('I verify VerticalScroll review counts and classifications match', async function () {
+
+// Granular steps for HorizontalScroll
+Then('I verify HorizontalScroll scrolling behavior is smooth and continuous', async function () {
+    await this.currentWidget.validateHorizontalScrolling();
+});
+
+Then('I verify HorizontalScroll media loads and plays correctly', async function () {
+    await this.currentWidget.validateMediaIntegrity();
+});
+
+Then('I verify HorizontalScroll review counts and classifications match', async function () {
     await this.currentWidget.validateReviewCountsAndTypes();
+});
+
+Then('I verify HorizontalScroll Read More\\/Read Less functionality', { timeout: 60 * 1000 }, async function () {
+    await this.currentWidget.validateReadMoreExpansion();
 });
