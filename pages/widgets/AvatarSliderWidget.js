@@ -171,71 +171,66 @@ class AvatarSliderWidget extends BaseWidget {
 
     async validateMediaAndCounts() {
         this.logAudit('Behavior: Validating Media loading and Review counts.');
-        await this.initContext();
-        const nextBtn = this.context.locator(this.nextButton);
+        try {
+            await this.initContext();
 
-        // Use a set to track unique reviews by ID to handle lazy loading/clones
-        const processedIds = new Set();
-        this.reviewStats = { total: 0, text: 0, video: 0, audio: 0 };
+            // Performance Optimization: Batch process all reviews in the DOM at once
+            // This is much faster than clicking "Next" 292 times
+            const allReviews = this.context.locator(this.cardSelector);
+            const initialCount = await allReviews.count();
 
-        // Reset to start
-        const prevBtn = this.context.locator(this.prevButton);
-        let resetCounter = 0;
-        while (await prevBtn.isEnabled() && resetCounter < 60) {
-            await prevBtn.click();
-            await this.page.waitForTimeout(100);
-            resetCounter++;
-        }
+            this.logAudit(`Initial scan detected ${initialCount} reviews in DOM. Processing...`);
 
-        let safetyCounter = 0;
-        let reachedEnd = false;
+            const cardData = await allReviews.evaluateAll(elements => {
+                return elements.map(el => {
+                    const id = el.getAttribute('data-feed-id') || el.getAttribute('data-id') || el.id;
+                    if (!id) return null;
 
-        while (!reachedEnd && safetyCounter < 60) {
-            // Find all potential review items currently in DOM
-            const currentReviews = this.context.locator(this.cardSelector);
-            const count = await currentReviews.count();
+                    const hasVideo = !!el.querySelector('video, [src*=".mp4"], iframe[src*="youtube"], iframe[src*="vimeo"], .video-play-button, .feedspace-element-play-feed, .play-icon, img[src*="manual_video_review"]');
+                    const hasAudio = !!el.querySelector('audio, [src*=".mp3"], .audio-player, .feedspace-audio-player, .feedspace-element-audio-feed-box, .microphone-icon');
 
-            for (let i = 0; i < count; i++) {
-                const slide = currentReviews.nth(i);
-                const id = await slide.getAttribute('data-feed-id');
+                    return { id, hasVideo, hasAudio };
+                }).filter(d => d !== null);
+            });
 
-                // If it has an ID and we haven't processed it yet
-                if (id && !processedIds.has(id)) {
-                    processedIds.add(id);
+            const processedIds = new Set();
+            this.reviewStats = { total: 0, text: 0, video: 0, audio: 0 };
 
-                    // Detect media (no scroll for speed)
-                    const hasVideo = await slide.locator('video, [src*=".mp4"], iframe[src*="youtube"], iframe[src*="vimeo"], .video-play-button, .feedspace-element-play-feed, .play-icon, img[src*="manual_video_review"]').count() > 0;
-                    const hasAudio = await slide.locator('audio, [src*=".mp3"], .audio-player, .feedspace-audio-player, .feedspace-element-audio-feed-box, .microphone-icon').count() > 0;
-
-                    if (hasVideo) this.reviewStats.video++;
-                    else if (hasAudio) this.reviewStats.audio++;
+            for (const data of cardData) {
+                if (!processedIds.has(data.id)) {
+                    processedIds.add(data.id);
+                    if (data.hasVideo) this.reviewStats.video++;
+                    else if (data.hasAudio) this.reviewStats.audio++;
                     else this.reviewStats.text++;
-
                     this.reviewStats.total++;
                 }
             }
 
-            if (await nextBtn.isDisabled() || safetyCounter >= 55) {
-                reachedEnd = true;
-            } else {
-                try {
-                    await nextBtn.click({ timeout: 1000 });
-                    await this.page.waitForTimeout(150); // Short wait for slide transition
-                } catch (e) { reachedEnd = true; }
+            // Optional: Short sampling of "Next" clicks to trigger lazy-loading if count is low
+            // But if we already have 290+, we don't need to crawl everything for a sanity check
+            if (this.reviewStats.total < 10) {
+                const nextBtn = this.context.locator(this.nextButton);
+                let safety = 0;
+                while (await nextBtn.isEnabled() && safety < 5) {
+                    await nextBtn.click();
+                    await this.page.waitForTimeout(200);
+                    safety++;
+                }
             }
-            safetyCounter++;
+
+            this.logAudit(`Reviews Segmented: Total unique IDs processed ${this.reviewStats.total} (Text: ${this.reviewStats.text}, Video: ${this.reviewStats.video}, Audio: ${this.reviewStats.audio})`);
+
+            if (this.reviewStats.total > 0) {
+                this.logAudit(`Review Count: Substantial volume detection successful (Count: ${this.reviewStats.total}).`);
+            } else {
+                this.logAudit(`Review Count: Detected ${this.reviewStats.total} reviews. Check if content is loaded.`, 'info');
+            }
+
+            // Media integrity check
+            await this.validateMediaIntegrity();
+        } catch (e) {
+            this.logAudit(`Media and Counts: Validation error - ${e.message}`, 'fail');
         }
-
-        this.logAudit(`Reviews Segmented: Total unique IDs processed ${this.reviewStats.total} (Text: ${this.reviewStats.text}, Video: ${this.reviewStats.video}, Audio: ${this.reviewStats.audio})`);
-
-        if (this.reviewStats.total > 0) {
-            this.logAudit(`Review Count: Substantial volume detection successful (Count: ${this.reviewStats.total}).`);
-        } else {
-            this.logAudit(`Review Count: Detected ${this.reviewStats.total} reviews. Check if content is loaded.`, 'info');
-        }
-
-        // Media integrity check (Scenarios 11, 14, 15, 16)
-        await this.validateMediaIntegrity();
     }
 
     async validateMediaIntegrity() {

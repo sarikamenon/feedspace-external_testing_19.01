@@ -12,161 +12,119 @@ Given('I load the widget URL', async function () {
         throw new Error(`No URL found in widgetConfig.json`);
     }
     console.log(`Navigating to widget URL: ${url}`);
-    await this.page.goto(url, { waitUntil: 'load', timeout: 45000 });
+
+    const maxRetries = 3;
+    let attempts = 0;
+    let loaded = false;
+
+    while (attempts < maxRetries && !loaded) {
+        attempts++;
+        try {
+            console.log(`[Dynamic Test] Navigation attempt ${attempts}/${maxRetries}...`);
+            await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            loaded = true;
+            console.log(`[Dynamic Test] Navigation successful.`);
+        } catch (error) {
+            console.warn(`[Dynamic Test] Navigation failed (attempt ${attempts}): ${error.message}`);
+            if (this.page.isClosed()) {
+                throw new Error('Browser closed during navigation retry.');
+            }
+            if (attempts === maxRetries) throw error;
+            await this.page.waitForTimeout(3000);
+        }
+    }
+
     await this.page.waitForTimeout(2000); // Small grace period for late scripts
 });
 
-Given('I load the widget URL for type {string}', async function (widgetType) {
-    // Keeping this for backward compatibility or direct type testing if needed
-    // But now we usually load the single URL from config
-    const url = testData.page.url;
-    await this.page.goto(url, { waitUntil: 'load', timeout: 45000 });
-    await this.page.waitForTimeout(2000);
-});
-
 Then('the framework should dynamically detect the widget as {string}', async function (widgetType) {
-    currentWidget = await WidgetFactory.detectAndCreate(this.page, widgetType, testData);
-    this.currentWidget = currentWidget; // Attach to World for hooks
-    expect(currentWidget).toBeDefined();
+    const detectedInstances = await WidgetFactory.detectAndCreate(this.page, widgetType, testData);
+    this.detectedWidgets = detectedInstances; // Store array
+    expect(this.detectedWidgets.length).toBeGreaterThan(0);
+    console.log(`[Dynamic Test] Detected ${this.detectedWidgets.length} widgets.`);
 });
 
 Then('the widget should be visible and contain at least {int} reviews', async function (minReviews) {
-    await this.currentWidget.validateVisibility(minReviews);
-    const failures = this.currentWidget.auditLog.filter(l => l.type === 'fail' && l.message.includes('reviews'));
-    expect(failures, `Visibility/Review count failures: ${failures.map(f => f.message).join(', ')}`).toHaveLength(0);
+    for (const widget of this.detectedWidgets) {
+        console.log(`[Validation] Checking visibility for ${widget.constructor.name}`);
+        await widget.validateVisibility(minReviews);
+        const failures = widget.auditLog.filter(l => l.type === 'fail' && l.message.includes('reviews'));
+        expect(failures, `[${widget.constructor.name}] Visibility failures: ${failures.map(f => f.message).join(', ')}`).toHaveLength(0);
+    }
 });
 
 Then('the widget should follow the layout and branding guidelines', async function () {
-    await this.currentWidget.validateBranding();
-    await this.currentWidget.validateCTA();
-});
-
-Then(/Date Consistency: All review dates appear valid./, async function () {
-    await this.currentWidget.validateDateConsistency();
-    const failures = this.currentWidget.auditLog.filter(l => l.type === 'fail' && l.message.includes('Date Consistency'));
-    expect(failures, `Date Consistency failures detected.`).toHaveLength(0);
-});
-
-Then(/Layout Integrity: No overlapping cards found./, async function () {
-    await this.currentWidget.validateLayoutIntegrity();
-    const failures = this.currentWidget.auditLog.filter(l => l.type === 'fail' && l.message.includes('Layout Integrity'));
-    expect(failures, `Layout Integrity issues detected.`).toHaveLength(0);
-});
-
-Then(/Text Readability: No text overflow detected \(all content visible\)./, async function () {
-    await this.currentWidget.validateTextReadability();
-    const failures = this.currentWidget.auditLog.filter(l => l.type === 'fail' && l.message.includes('Text Readability'));
-    expect(failures, `Text Readability issues detected.`).toHaveLength(0);
-});
-
-Then('I verify the widget-specific unique behaviors for {string}', async function (widgetType) {
-    if (typeof this.currentWidget.validateUniqueBehaviors === 'function') {
-        await this.currentWidget.validateUniqueBehaviors();
-    } else {
-        console.log(`No unique behaviors defined for ${widgetType}, skipping.`);
+    for (const widget of this.detectedWidgets) {
+        await widget.validateBranding();
+        await widget.validateCTA();
     }
 });
 
-Then('I run accessibility audit for the widget', async function () {
-    await this.currentWidget.runAccessibilityAudit();
-    const failures = this.currentWidget.auditLog.filter(l => l.type === 'fail' && l.message.includes('Accessibility'));
-    expect(failures, `Accessibility violations detected.`).toHaveLength(0);
-});
+Then('I perform a comprehensive UI audit', { timeout: 600 * 1000 }, async function () {
+    console.log('DEBUG: Starting consolidated UI audit for ALL detected widgets...');
 
-Then('I verify widget responsiveness on mobile', async function () {
-    await this.currentWidget.validateResponsiveness('Mobile');
-    await this.currentWidget.validateVisibility();
-    await this.currentWidget.validateAlignment();
-});
+    for (const widget of this.detectedWidgets) {
+        const widgetName = widget.constructor.name;
+        console.log(`\n[AUDIT] Starting audit for: ${widgetName}`);
+        try {
 
+            await widget.validateVisibility();
+            await widget.validateBranding();
+            await widget.validateCTA();
+            await widget.validateDateConsistency();
+            await widget.validateLayoutIntegrity();
+            await widget.validateAlignment();
+            await widget.validateTextReadability();
+            await widget.runAccessibilityAudit();
+            await widget.validateMediaIntegrity();
+            await widget.validateReadMore();
+            await widget.validateCardConsistency();
 
+            if (typeof widget.validateUniqueBehaviors === 'function') {
+                await widget.validateUniqueBehaviors();
+            }
+        } catch (error) {
+            console.error(`[AUDIT] Critical error during audit for ${widgetName}: ${error.message}`);
+            widget.logAudit(`Critical Audit Failure: ${error.message}`, 'fail');
+        }
 
-Then('I perform a comprehensive UI audit', async function () {
-    console.log('DEBUG: Starting consolidated UI audit...');
-    await this.currentWidget.validateVisibility();
-    await this.currentWidget.validateBranding();
-    await this.currentWidget.validateCTA();
-    await this.currentWidget.validateDateConsistency();
-    await this.currentWidget.validateLayoutIntegrity();
-    await this.currentWidget.validateAlignment();
-    await this.currentWidget.validateTextReadability();
-    await this.currentWidget.runAccessibilityAudit();
-    await this.currentWidget.validateMediaIntegrity();
-    await this.currentWidget.validateReadMore();
-    await this.currentWidget.validateCardConsistency();
-
-    if (typeof this.currentWidget.validateUniqueBehaviors === 'function') {
-        await this.currentWidget.validateUniqueBehaviors();
+        const failures = widget.auditLog.filter(l => l.type === 'fail');
+        if (failures.length > 0) {
+            console.log(`[AUDIT] Found ${failures.length} failures for ${widgetName}, continuing...`);
+        }
     }
-
-    // DO NOT throw errors here - let the test continue to mobile testing
-    // Errors will be thrown at the final report generation step
-    const failures = this.currentWidget.auditLog.filter(l => l.type === 'fail');
-    if (failures.length > 0) {
-        console.log(`[AUDIT] Found ${failures.length} failures, but continuing to mobile testing...`);
-    }
-});
-
-Then('user validates card consistency and content', async function () {
-    await this.currentWidget.validateCardConsistency();
-    const failures = this.currentWidget.auditLog.filter(l => l.type === 'fail' && l.message.includes('Consistency'));
-    expect(failures).toHaveLength(0);
-});
-
-Then('verify that no review dates are undefined', async function () {
-    await this.currentWidget.validateDateConsistency();
-    const failures = this.currentWidget.auditLog.filter(l => l.type === 'fail' && l.message.includes('Date'));
-    expect(failures).toHaveLength(0);
-});
-
-Then('verify that review text is not overflowing', async function () {
-    await this.currentWidget.validateTextReadability();
-    const failures = this.currentWidget.auditLog.filter(l => l.type === 'fail' && l.message.includes('Readability'));
-    expect(failures).toHaveLength(0);
-});
-
-Then('verify optional UI elements if present', async function () {
-    await this.currentWidget.validateBranding();
-    await this.currentWidget.validateCTA();
-});
-
-Then('user performs generic accessibility audit', async function () {
-    await this.currentWidget.runAccessibilityAudit();
-    const failures = this.currentWidget.auditLog.filter(l => l.type === 'fail' && l.message.includes('Accessibility'));
-    expect(failures).toHaveLength(0);
-});
-
-Then('user validates structural integrity of the widget', async function () {
-    await this.currentWidget.validateLayoutIntegrity();
-    await this.currentWidget.validateAlignment();
-    const failures = this.currentWidget.auditLog.filter(l => l.type === 'fail' && (l.message.includes('Layout') || l.message.includes('Alignment')));
-    expect(failures).toHaveLength(0);
-});
-
-Then('verify that broken media is reported as an error', async function () {
-    await this.currentWidget.validateMediaIntegrity();
-    const failures = this.currentWidget.auditLog.filter(l => l.type === 'fail' && l.message.includes('Media Integrity'));
-    expect(failures).toHaveLength(0);
 });
 
 Then('I save the intermediate report for {string}', async function (widgetType) {
-    const reportName = (widgetType === 'DetectedWidget' || widgetType === 'Auto')
-        ? this.currentWidget.constructor.name.replace('Widget', '')
-        : widgetType;
+    for (const widget of this.detectedWidgets) {
+        const typeName = widget.constructor.name.replace('Widget', '');
+        const reportName = (widgetType === 'DetectedWidget' || widgetType === 'Auto') ? typeName : widgetType;
+        await widget.generateReport(reportName);
+    }
+});
 
-    // Generate but DO NOT throw error yet (similar to individual flow)
-    await this.currentWidget.generateReport(reportName);
+Then('I verify widget responsiveness on mobile', async function () {
+    for (const widget of this.detectedWidgets) {
+        await widget.validateResponsiveness('Mobile');
+        await widget.validateVisibility();
+        await widget.validateAlignment();
+    }
 });
 
 Then('I generate the final UI audit report for {string}', async function (widgetType) {
-    const finalReportName = (widgetType === 'DetectedWidget' || widgetType === 'Auto')
-        ? this.currentWidget.constructor.name.replace('Widget', '')
-        : widgetType;
-    await this.currentWidget.generateReport(finalReportName);
+    let totalFailures = 0;
 
-    // Fail the test if there were any failures logged (similar to individual flow)
-    const failures = this.currentWidget.auditLog.filter(l => l.type === 'fail');
-    if (failures.length > 0) {
-        throw new Error(`Widget Audit Failed for ${finalReportName} with ${failures.length} issues. Check report for details.`);
+    for (const widget of this.detectedWidgets) {
+        const typeName = widget.constructor.name.replace('Widget', '');
+        const finalReportName = (widgetType === 'DetectedWidget' || widgetType === 'Auto') ? typeName : widgetType;
+
+        await widget.generateReport(finalReportName);
+
+        const failures = widget.auditLog.filter(l => l.type === 'fail');
+        totalFailures += failures.length;
+    }
+
+    if (totalFailures > 0) {
+        throw new Error(`Widget Audit Failed with ${totalFailures} total issues across widgets. Check reports for details.`);
     }
 });

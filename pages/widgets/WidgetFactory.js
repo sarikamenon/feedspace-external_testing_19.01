@@ -33,41 +33,55 @@ class WidgetFactory {
 
         // Context search logic
         const frames = page.frames();
-        let detectedType = null;
+        const detectedTypes = new Set(); // Use Set to avoid duplicates
 
         const detectors = {
+            floatingcards: '.feedspace-floating-widget.show-left-bottom.close-active, .feedspace-floating-widget',
             carousel: '.feedspace-carousel-widget, .feedspace-element-container.feedspace-carousel-widget',
             stripslider: '.feedspace-marque-main-wrap, .feedspace-show-overlay',
             avatargroup: '.fe-feedspace-avatar-group-widget-wrap, .fe-widget-center',
             avatarslider: '.feedspace-single-review-widget, .feedspace-show-left-right-shadow',
             verticalscroll: '.feedspace-element-feed-top-bottom-marquee, .feedspace-top-bottom-shadow',
             horizontalscroll: '.feedspace-element-horizontal-scroll-widget, .feedspace-left-right-shadow',
-            floatingcards: '.feedspace-floating-widget.show-left-bottom',
             masonry: '.feedspace-element-container' // Base container often used for masonry
         };
+        // Remove masonry from generic detectors to avoid partial matches with WOL
+        delete detectors.masonry;
 
         for (const frame of frames) {
             try {
+                const frameUrl = frame.url();
+
+                // Specific check for Masonry via API Key
+                if (frameUrl.includes('78ee3e50-eca8-468c-9c54-dd91a7e7cd09')) {
+                    if (await frame.locator('.feedspace-element-container').first().isVisible({ timeout: 500 })) {
+                        console.log('Detected masonry via API Key in iframe.');
+                        detectedTypes.add('masonry');
+                    }
+                }
+
                 for (const [type, selector] of Object.entries(detectors)) {
-                    if (await frame.locator(selector).first().isVisible({ timeout: 1000 })) {
+                    if (await frame.locator(selector).first().isVisible({ timeout: 500 })) { // Short timeout for check
                         console.log(`Detected ${type} in iframe.`);
-                        detectedType = type;
-                        break;
+                        detectedTypes.add(type);
                     }
                 }
             } catch (e) { }
-            if (detectedType) break;
         }
 
-        const finalType = detectedType || widgetTypeHint;
-        if (!detectedType) {
-            console.warn(`Dynamic detection failed for ${widgetTypeHint}. Falling back to type hint.`);
+        // Add hint fallback if nothing detected
+        if (detectedTypes.size === 0 && widgetTypeHint && widgetTypeHint !== 'Auto') {
+            console.warn(`Dynamic detection failed. Falling back to type hint: ${widgetTypeHint}`);
+            detectedTypes.add(widgetTypeHint.toLowerCase());
         }
 
-        // Find the specific config for this type in the widgets array
-        const widgetConfig = config.widgets.find(w => w.type.toLowerCase() === finalType.toLowerCase()) || { type: finalType, uiRules: {} };
+        const instances = [];
+        for (const type of detectedTypes) {
+            const widgetConfig = config.widgets.find(w => w.type.toLowerCase() === type.toLowerCase()) || { type: type, uiRules: {} };
+            instances.push(this.createInstance(type, page, widgetConfig));
+        }
 
-        return this.createInstance(finalType, page, widgetConfig);
+        return instances;
     }
 
     static createInstance(type, page, config) {

@@ -131,3 +131,21 @@ Feature: Individual Widget Validation (Dedicated)
     And I verify HorizontalScroll review counts and classifications match
     And individual verify widget responsiveness on mobile
     And I generate the individual final UI audit report for "HorizontalScroll"
+
+  @Individual_FloatingCards
+  Scenario: Validate FloatingCards Widget Comprehensive Compliance
+    Given I initiate testing for "FloatingCards" widget
+    Then the individual framework detects "FloatingCards"
+    And I verify Floating Widget container loads successfully
+    And the individual widget follows layout and branding guidelines
+    And I verify Floating Widget popup sequence and interaction
+    And I verify Floating Widget media playback and loading
+    And I verify Floating Widget Read More / Read Less functionality
+    And I verify Floating Widget review counts and classifications
+    And individual verify that review text is not overflowing
+    And individual verify that no review dates are undefined
+    And individual user validates structural integrity of the widget
+    And individual user performs generic accessibility audit
+    And individual verify widget responsiveness on mobile
+    And I generate the individual final UI audit report for "FloatingCards"
+

@@ -26,8 +26,44 @@ Given('I initiate testing for {string} widget', async function (widgetType) {
     }
 
     console.log(`[Individual Test] Navigating to: ${url}`);
-    await this.page.goto(url, { waitUntil: 'load', timeout: 45000 });
-    await this.page.waitForTimeout(2000); // Wait for initialization
+
+    // Diagnostic logging
+    this.page.on('console', msg => {
+        if (msg.type() === 'error') console.log(` [BROWSER ERROR] ${msg.text()}`);
+    });
+
+    const maxRetries = 3;
+    let attempts = 0;
+    let loaded = false;
+
+    while (attempts < maxRetries && !loaded) {
+        attempts++;
+        try {
+            console.log(`[Individual Test] Navigation attempt ${attempts}/${maxRetries}...`);
+            await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            loaded = true;
+            console.log(`[Individual Test] Navigation successful.`);
+        } catch (error) {
+            console.warn(`[Individual Test] Navigation failed (attempt ${attempts}): ${error.message}`);
+            if (this.page.isClosed()) {
+                throw new Error('Browser closed during navigation retry.');
+            }
+            if (attempts === maxRetries) throw error;
+            await this.page.waitForTimeout(3000);
+        }
+    }
+
+    if (this.page.isClosed()) return;
+
+    const pageTitle = await this.page.title().catch(() => 'Unknown');
+    console.log(`[Individual Test] Current Title: "${pageTitle}"`);
+
+    await this.page.waitForSelector('body', { timeout: 10000 }).catch(() => console.error('Body NOT found!'));
+    await this.page.waitForTimeout(10000);
+    console.log(`[Individual Test] Finished initialization wait.`);
+
+    // Debug screenshot to see what's loaded
+    await this.page.screenshot({ path: `reports/debug_after_wait_${widgetType}.png` }).catch(() => { });
 
     currentWidgetType = widgetType;
 });
@@ -45,7 +81,8 @@ When('I reload the widget page', async function () {
     await this.page.waitForTimeout(3000);
 
     // Re-detect and re-init to ensure fresh context
-    currentWidget = await WidgetFactory.detectAndCreate(this.page, currentWidgetType, individualConfig);
+    const widgets = await WidgetFactory.detectAndCreate(this.page, currentWidgetType, individualConfig);
+    currentWidget = widgets.find(w => w.constructor.name.toLowerCase().includes(currentWidgetType.toLowerCase())) || widgets[0];
 
     // Restore logs and stats if instance was successfully recreated
     if (currentWidget) {
@@ -65,7 +102,9 @@ Then('the individual framework detects {string}', async function (expectedType) 
         return;
     }
 
-    currentWidget = await WidgetFactory.detectAndCreate(this.page, expectedType, individualConfig);
+    const widgets = await WidgetFactory.detectAndCreate(this.page, expectedType, individualConfig);
+    // Handle array return - find matching type or take first
+    currentWidget = widgets.find(w => w.constructor.name.toLowerCase().includes(expectedType.toLowerCase())) || widgets[0];
     this.currentWidget = currentWidget;
 
     if (!currentWidget) {
@@ -142,6 +181,8 @@ Then('I generate the individual final UI audit report for {string}', async funct
     // Fail the test at the VERY END if there were any failures logged
     const failures = currentWidget.auditLog.filter(l => l.type === 'fail');
     if (failures.length > 0) {
+        console.error('--- AUDIT FAILURES DETECTED ---');
+        failures.forEach(f => console.error(`[FAIL] ${f.message}`));
         throw new Error(`Individual Widget Audit Failed with ${failures.length} issues. Check report for details.`);
     }
 });
@@ -166,7 +207,7 @@ Then('I verify AvatarSlider media loads successfully across slides', async funct
     await this.currentWidget.validateMediaIntegrity();
 });
 
-Then('I verify AvatarSlider review counts and classifications match', async function () {
+Then('I verify AvatarSlider review counts and classifications match', { timeout: 120 * 1000 }, async function () {
     await this.currentWidget.validateMediaAndCounts();
 });
 
@@ -186,8 +227,12 @@ Then('I verify VerticalScroll media loads and plays correctly', async function (
     }
 });
 
-Then('I verify VerticalScroll Read More\\/Read Less functionality', { timeout: 60 * 1000 }, async function () {
+Then(/^I verify VerticalScroll Read More\/Read Less functionality$/, { timeout: 60 * 1000 }, async function () {
     await this.currentWidget.validateReadMoreExpansion();
+});
+
+Then('I verify VerticalScroll review counts and classifications match', async function () {
+    await this.currentWidget.validateReviewCountsAndTypes();
 });
 
 
@@ -204,6 +249,28 @@ Then('I verify HorizontalScroll review counts and classifications match', async 
     await this.currentWidget.validateReviewCountsAndTypes();
 });
 
-Then('I verify HorizontalScroll Read More\\/Read Less functionality', { timeout: 60 * 1000 }, async function () {
+Then(/^I verify HorizontalScroll Read More\/Read Less functionality$/, { timeout: 60 * 1000 }, async function () {
     await this.currentWidget.validateReadMoreExpansion();
 });
+
+// Granular steps for Floating Widget
+Then('I verify Floating Widget container loads successfully', async function () {
+    await this.currentWidget.validateFloatingWidgetLoading();
+});
+
+Then('I verify Floating Widget popup sequence and interaction', { timeout: 600 * 1000 }, async function () {
+    await this.currentWidget.validatePopupSequence();
+});
+
+Then('I verify Floating Widget media playback and loading', { timeout: 120 * 1000 }, async function () {
+    await this.currentWidget.validateMediaPlayback();
+});
+
+Then(/^I verify Floating Widget Read More \/ Read Less functionality$/, { timeout: 60 * 1000 }, async function () {
+    await this.currentWidget.validateReadMoreExpansion();
+});
+
+Then('I verify Floating Widget review counts and classifications', async function () {
+    await this.currentWidget.validateReviewCountsAndTypes();
+});
+

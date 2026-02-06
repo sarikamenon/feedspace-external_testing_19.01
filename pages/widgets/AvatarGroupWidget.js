@@ -166,6 +166,38 @@ class AvatarGroupWidget extends BaseWidget {
         this.logAudit(`Interaction: Successfully verified ${interactionCount} reviews via modal inspection.`);
     }
 
+    async validateMediaIntegrity() {
+        await this.initContext();
+
+        const avatarCards = this.context.locator(this.cardSelector);
+        const count = await avatarCards.count();
+
+        let brokenCount = 0;
+        const brokenDetails = [];
+
+        for (let i = 0; i < count; i++) {
+            const card = avatarCards.nth(i);
+            if (!(await card.isVisible())) continue;
+
+            const img = card.locator('img').first();
+            if (await img.count() === 0) continue; // Skip if no image in card
+
+            const isBroken = await img.evaluate(el => !el.complete || el.naturalWidth === 0);
+            if (isBroken) {
+                const src = await img.getAttribute('src');
+                const cardId = await card.getAttribute('data-feed-id') || `Index ${i}`;
+                brokenCount++;
+                brokenDetails.push(`Image Element (Card: ${cardId}) (src: "${src ? src.substring(0, 40) + '...' : 'null'}")`);
+            }
+        }
+
+        if (brokenCount > 0) {
+            this.logAudit(`Media Integrity: Found broken media on ${brokenCount} avatars. Exact Location: ${brokenDetails.join(', ')}`, 'fail');
+        } else {
+            this.logAudit(`Media Integrity: Verified ${count} avatars. All images loaded successfully.`);
+        }
+    }
+
     async validateLayoutIntegrity() {
         this.logAudit('Layout Integrity: Cluster-based layout verified (Overlaps are intentional for Avatar Group).');
     }

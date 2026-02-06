@@ -458,80 +458,83 @@ class VerticalScrollWidget extends BaseWidget {
 
     async validateReviewCountsAndTypes() {
         console.log('Running Review Count validation...');
+        try {
+            const allCards = this.context.locator(this.cardSelector);
+            const totalCards = await allCards.count();
+            this.logAudit(`Processing ${totalCards} cards for count and type validation...`);
 
-        const allCards = this.context.locator(this.cardSelector);
-        const totalCards = await allCards.count();
-        this.logAudit(`Processing ${totalCards} cards for count and type validation...`);
+            // Performance Optimization: Batch process all cards in one evaluate call
+            const cardData = await allCards.evaluateAll(elements => {
+                return elements.map((el, i) => {
+                    // 1. Skip clones early
+                    const isClone = el.closest('[data-fs-marquee-clone="true"], .cloned, .clone') ||
+                        el.getAttribute('aria-hidden') === 'true';
+                    if (isClone) return null;
 
-        // Performance Optimization: Batch process all cards in one evaluate call
-        const cardData = await allCards.evaluateAll(elements => {
-            return elements.map((el, i) => {
-                // 1. Skip clones early
-                const isClone = el.closest('[data-fs-marquee-clone="true"], .cloned, .clone') ||
-                    el.getAttribute('aria-hidden') === 'true';
-                if (isClone) return null;
+                    // 2. Check if CTA
+                    const isCTA = el.classList.contains('feedspace-inline-cta-card') ||
+                        !!el.closest('.feedspace-inline-cta-card') ||
+                        !!el.querySelector('.feedspace-inline-cta-card');
 
-                // 2. Check if CTA
-                const isCTA = el.classList.contains('feedspace-inline-cta-card') ||
-                    !!el.closest('.feedspace-inline-cta-card') ||
-                    !!el.querySelector('.feedspace-inline-cta-card');
+                    // 3. Get Unique Identifiers
+                    const feedId = el.getAttribute('data-feed-id') || el.getAttribute('data-id') || el.id;
 
-                // 3. Get Unique Identifiers
-                const feedId = el.getAttribute('data-feed-id') || el.getAttribute('data-id') || el.id;
+                    // 4. Fallback ID for CTA or Reviews
+                    let fallbackId = '';
+                    if (!feedId) {
+                        const textEl = el.querySelector('.feedspace-element-feed-text, .review-text, p');
+                        fallbackId = (isCTA ? 'CTA-' : '') + (textEl ? textEl.textContent.trim().substring(0, 30) : `Card-${i}`);
+                    }
 
-                // 4. Fallback ID for CTA or Reviews
-                let fallbackId = '';
-                if (!feedId) {
-                    const textEl = el.querySelector('.feedspace-element-feed-text, .review-text, p');
-                    fallbackId = (isCTA ? 'CTA-' : '') + (textEl ? textEl.textContent.trim().substring(0, 30) : `Card-${i}`);
+                    // 5. Detect Media Types
+                    const hasVideo = !!el.querySelector('video, iframe[src*="youtube"], iframe[src*="vimeo"], .video-play-button, .feedspace-element-play-feed:not(.feedspace-element-audio-feed-box)');
+                    const hasAudio = !!el.querySelector('audio, .audio-player, .fa-volume-up, .feedspace-audio-player, .feedspace-element-audio-feed-box');
+
+                    return {
+                        index: i + 1,
+                        isCTA,
+                        id: feedId || fallbackId,
+                        hasVideo,
+                        hasAudio
+                    };
+                }).filter(d => d !== null);
+            });
+
+            // Deduplicate and count
+            const uniqueReviews = new Set();
+            const uniqueCTAs = new Set();
+            let textCount = 0;
+            let videoCount = 0;
+            let audioCount = 0;
+            let ctaCount = 0;
+
+            for (const data of cardData) {
+                if (data.isCTA) {
+                    if (!uniqueCTAs.has(data.id)) {
+                        uniqueCTAs.add(data.id);
+                        ctaCount++;
+                    }
+                    continue;
                 }
 
-                // 5. Detect Media Types
-                const hasVideo = !!el.querySelector('video, iframe[src*="youtube"], iframe[src*="vimeo"], .video-play-button, .feedspace-element-play-feed:not(.feedspace-element-audio-feed-box)');
-                const hasAudio = !!el.querySelector('audio, .audio-player, .fa-volume-up, .feedspace-audio-player, .feedspace-element-audio-feed-box');
-
-                return {
-                    index: i + 1,
-                    isCTA,
-                    id: feedId || fallbackId,
-                    hasVideo,
-                    hasAudio
-                };
-            }).filter(d => d !== null);
-        });
-
-        // Deduplicate and count
-        const uniqueReviews = new Set();
-        const uniqueCTAs = new Set();
-        let textCount = 0;
-        let videoCount = 0;
-        let audioCount = 0;
-        let ctaCount = 0;
-
-        for (const data of cardData) {
-            if (data.isCTA) {
-                if (!uniqueCTAs.has(data.id)) {
-                    uniqueCTAs.add(data.id);
-                    ctaCount++;
+                if (!uniqueReviews.has(data.id)) {
+                    uniqueReviews.add(data.id);
+                    if (data.hasVideo) videoCount++;
+                    else if (data.hasAudio) audioCount++;
+                    else textCount++;
                 }
-                continue;
             }
 
-            if (!uniqueReviews.has(data.id)) {
-                uniqueReviews.add(data.id);
-                if (data.hasVideo) videoCount++;
-                else if (data.hasAudio) audioCount++;
-                else textCount++;
+            const uniqueTotal = uniqueReviews.size;
+
+            if (uniqueTotal > 0) {
+                this.logAudit(`Review Count: ${uniqueTotal} unique reviews (Text: ${textCount}, Video: ${videoCount}, Audio: ${audioCount})`);
+                if (ctaCount > 0) this.logAudit(`CTA Cards: Found ${ctaCount} unique CTA card(s).`);
+            } else {
+                this.logAudit('Review Count: No unique reviews detected in widget.', 'fail');
             }
-        }
-
-        const uniqueTotal = uniqueReviews.size;
-
-        if (uniqueTotal > 0) {
-            this.logAudit(`Review Count: ${uniqueTotal} unique reviews (Text: ${textCount}, Video: ${videoCount}, Audio: ${audioCount})`);
-            if (ctaCount > 0) this.logAudit(`CTA Cards: Found ${ctaCount} unique CTA card(s).`);
-        } else {
-            this.logAudit('Review Count: No unique reviews detected in widget.', 'fail');
+        } catch (e) {
+            this.logAudit(`Review Count: Validation error - ${e.message}`, 'fail');
         }
     }
 
@@ -578,96 +581,100 @@ class VerticalScrollWidget extends BaseWidget {
 
     async validateDateConsistency() {
         console.log('Running Date Consistency check...');
-        const cards = this.context.locator(this.cardSelector);
-        const count = await cards.count();
-        this.logAudit(`Processing ${count} cards for date and content integrity...`);
+        try {
+            const cards = this.context.locator(this.cardSelector);
+            const count = await cards.count();
+            this.logAudit(`Processing ${count} cards for date and content integrity...`);
 
-        // Performance Optimization: Batch process all cards
-        const auditData = await cards.evaluateAll(elements => {
-            return elements.map((el, i) => {
-                // 1. Skip clones and hidden
-                const isClone = el.closest('[data-fs-marquee-clone="true"], .cloned, .clone') ||
-                    el.getAttribute('aria-hidden') === 'true';
-                if (isClone) return null;
+            // Performance Optimization: Batch process all cards
+            const auditData = await cards.evaluateAll(elements => {
+                return elements.map((el, i) => {
+                    // 1. Skip clones and hidden
+                    const isClone = el.closest('[data-fs-marquee-clone="true"], .cloned, .clone') ||
+                        el.getAttribute('aria-hidden') === 'true';
+                    if (isClone) return null;
 
-                // 2. Skip CTA
-                const isCTA = el.classList.contains('feedspace-inline-cta-card') ||
-                    !!el.closest('.feedspace-inline-cta-card');
-                if (isCTA) return null;
+                    // 2. Skip CTA
+                    const isCTA = el.classList.contains('feedspace-inline-cta-card') ||
+                        !!el.closest('.feedspace-inline-cta-card');
+                    if (isCTA) return null;
 
-                const feedId = el.getAttribute('data-feed-id') || 'N/A';
+                    const feedId = el.getAttribute('data-feed-id') || 'N/A';
 
-                // Check for literal 'undefined' or 'null' in date field or general content
-                const dateEl = el.querySelector('.date, .review-date, .feedspace-element-date, .feedspace-element-feed-date, .feedspace-element-date-text');
-                const dateHtml = dateEl ? dateEl.innerHTML.toLowerCase() : '';
-                const hasUndefinedDate = dateHtml.includes('undefined') || dateHtml.includes('null');
+                    // Check for literal 'undefined' or 'null' in date field or general content
+                    const dateEl = el.querySelector('.date, .review-date, .feedspace-element-date, .feedspace-element-feed-date, .feedspace-element-date-text');
+                    const dateHtml = dateEl ? dateEl.innerHTML.toLowerCase() : '';
+                    const hasUndefinedDate = dateHtml.includes('undefined') || dateHtml.includes('null');
 
-                const cardHtml = el.innerHTML.toLowerCase();
-                const cardText = el.innerText.toLowerCase();
-                const hasLeakedData = cardHtml.includes('undefined') || cardHtml.includes('null') || cardText.includes('invalid date');
+                    const cardHtml = el.innerHTML.toLowerCase();
+                    const cardText = el.innerText.toLowerCase();
+                    const hasLeakedData = cardHtml.includes('undefined') || cardHtml.includes('null') || cardText.includes('invalid date');
 
-                // Find specific element if leaked data exists
-                let exactLocation = 'General Card Content';
-                let snippet = '';
-                if (hasLeakedData) {
-                    const allChilds = el.querySelectorAll('*');
-                    for (const child of allChilds) {
-                        const childText = child.textContent || '';
-                        if (childText.toLowerCase().includes('undefined') || childText.toLowerCase().includes('null') || childText.toLowerCase().includes('invalid date')) {
-                            exactLocation = child.tagName.toLowerCase() + (child.className ? '.' + child.className.split(' ')[0] : '');
-                            snippet = childText.substring(0, 100);
-                            break;
+                    // Find specific element if leaked data exists
+                    let exactLocation = 'General Card Content';
+                    let snippet = '';
+                    if (hasLeakedData) {
+                        const allChilds = el.querySelectorAll('*');
+                        for (const child of allChilds) {
+                            const childText = child.textContent || '';
+                            if (childText.toLowerCase().includes('undefined') || childText.toLowerCase().includes('null') || childText.toLowerCase().includes('invalid date')) {
+                                exactLocation = child.tagName.toLowerCase() + (child.className ? '.' + child.className.split(' ')[0] : '');
+                                snippet = childText.substring(0, 100);
+                                break;
+                            }
                         }
                     }
+
+                    return {
+                        index: i + 1,
+                        feedId,
+                        hasUndefinedDate,
+                        hasLeakedData,
+                        dateHtml: dateEl ? dateEl.innerHTML : '',
+                        exactLocation,
+                        snippet: snippet || el.innerText.substring(0, 50)
+                    };
+                }).filter(d => d !== null);
+            });
+
+            const seenFeedIds = new Set();
+            let invalidDateCardsCount = 0; // Track count for the final logAudit
+            for (const data of auditData) {
+                if (data.feedId !== 'N/A' && seenFeedIds.has(data.feedId)) continue;
+                seenFeedIds.add(data.feedId);
+
+                if (data.hasUndefinedDate) {
+                    invalidDateCardsCount++;
+                    this.detailedFailures.push({
+                        type: 'Date Consistency',
+                        card: data.index,
+                        feedId: data.feedId,
+                        location: 'Date Field',
+                        snippet: data.dateHtml,
+                        description: `Date field contains literal 'undefined' or 'null'. (ID: ${data.feedId})`,
+                        severity: 'High'
+                    });
+                } else if (data.hasLeakedData) {
+                    invalidDateCardsCount++;
+                    this.detailedFailures.push({
+                        type: 'Malformed content',
+                        card: data.index,
+                        feedId: data.feedId,
+                        location: data.exactLocation,
+                        snippet: data.snippet,
+                        description: `Review card contains leaked 'undefined', 'null', or 'invalid date'. (ID: ${data.feedId})`,
+                        severity: 'High'
+                    });
                 }
-
-                return {
-                    index: i + 1,
-                    feedId,
-                    hasUndefinedDate,
-                    hasLeakedData,
-                    dateHtml: dateEl ? dateEl.innerHTML : '',
-                    exactLocation,
-                    snippet: snippet || el.innerText.substring(0, 50)
-                };
-            }).filter(d => d !== null);
-        });
-
-        const seenFeedIds = new Set();
-        let invalidDateCardsCount = 0; // Track count for the final logAudit
-        for (const data of auditData) {
-            if (data.feedId !== 'N/A' && seenFeedIds.has(data.feedId)) continue;
-            seenFeedIds.add(data.feedId);
-
-            if (data.hasUndefinedDate) {
-                invalidDateCardsCount++;
-                this.detailedFailures.push({
-                    type: 'Date Consistency',
-                    card: data.index,
-                    feedId: data.feedId,
-                    location: 'Date Field',
-                    snippet: data.dateHtml,
-                    description: `Date field contains literal 'undefined' or 'null'. (ID: ${data.feedId})`,
-                    severity: 'High'
-                });
-            } else if (data.hasLeakedData) {
-                invalidDateCardsCount++;
-                this.detailedFailures.push({
-                    type: 'Malformed content',
-                    card: data.index,
-                    feedId: data.feedId,
-                    location: data.exactLocation,
-                    snippet: data.snippet,
-                    description: `Review card contains leaked 'undefined', 'null', or 'invalid date'. (ID: ${data.feedId})`,
-                    severity: 'High'
-                });
             }
-        }
-        this.logAudit('Date Consistency & Content Integrity check complete.');
-        if (invalidDateCardsCount > 0) {
-            this.logAudit(`Date Consistency: Found 'undefined' or 'null' strings in ${invalidDateCardsCount} unique card(s)`, 'fail');
-        } else {
-            this.logAudit('Date Consistency: All review dates are valid or intentionally empty (optional).');
+            this.logAudit('Date Consistency & Content Integrity check complete.');
+            if (invalidDateCardsCount > 0) {
+                this.logAudit(`Date Consistency: Found 'undefined' or 'null' strings in ${invalidDateCardsCount} unique card(s)`, 'fail');
+            } else {
+                this.logAudit('Date Consistency: All review dates are valid or intentionally empty (optional).');
+            }
+        } catch (e) {
+            this.logAudit(`Date Consistency: Validation error - ${e.message}`, 'info');
         }
     }
 }

@@ -311,7 +311,10 @@ class BaseWidget {
         console.log('Running Text Readability check...');
         const textElements = this.context.locator(this.cardSelector + ' .feedspace-element-feed-text, ' + this.cardSelector + ' .review-text, ' + this.cardSelector + ' p');
         const count = await textElements.count();
-        if (count === 0) return;
+        if (count === 0) {
+            this.logAudit('Text Readability: No text elements found matching standard selectors.', 'info');
+            return;
+        }
 
         // Performance Optimization: Batch process all text elements
         const textData = await textElements.evaluateAll(elements => {
@@ -773,7 +776,7 @@ class BaseWidget {
         <div class="summary-item">${getAuditStatus('Reviews Segmented').icon} Reviews Segmentation: ${this.reviewStats.total} reviews loaded (Text: ${this.reviewStats.text}, Video: ${this.reviewStats.video}, Audio: ${this.reviewStats.audio}${typeof this.reviewStats.cta !== 'undefined' ? `, CTAs: ${this.reviewStats.cta}` : ''})</div>
         <div class="summary-item">${getAuditStatus('Media Integrity').icon} Media Integrity: ${getAuditStatus('Media Integrity').type === 'fail' ? 'Broken media found.' : 'All images and videos loaded successfully.'}</div>
         <div class="summary-item">${getAuditStatus('Date Consistency').icon} Date Integrity: ${getAuditStatus('Date Consistency').type === 'fail' ? 'Malformed or undefined dates found.' : 'All dates are valid and consistent.'}</div>
-        <div class="summary-item">${getAuditStatus('Layout Integrity').icon} Layout & Alignment: Cards aligned, no overlapping detected.</div>
+        <div class="summary-item">${getAuditStatus('Layout Integrity').icon} Layout & Alignment: ${getAuditStatus('Layout Integrity').type === 'fail' ? 'Layout issues detected.' : 'Cards aligned and layout is functional.'}</div>
         
         <div class="summary-item" style="margin-top:20px; padding:15px; background:#fff3f3; border-radius:8px; border-left:5px solid #e74c3c;">
             <strong>❌ Critical Issues:</strong> 
