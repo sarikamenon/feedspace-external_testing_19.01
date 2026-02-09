@@ -81,8 +81,9 @@ When('I reload the widget page', async function () {
     await this.page.waitForTimeout(3000);
 
     // Re-detect and re-init to ensure fresh context
-    const widgets = await WidgetFactory.detectAndCreate(this.page, currentWidgetType, individualConfig);
-    currentWidget = widgets.find(w => w.constructor.name.toLowerCase().includes(currentWidgetType.toLowerCase())) || widgets[0];
+    const typeHint = typeof currentWidgetType !== 'undefined' ? currentWidgetType : 'Auto';
+    const widgets = await WidgetFactory.detectAndCreate(this.page, typeHint, individualConfig);
+    currentWidget = widgets.find(w => w.constructor.name.toLowerCase().includes(typeHint.toLowerCase())) || widgets[0];
 
     // Restore logs and stats if instance was successfully recreated
     if (currentWidget) {

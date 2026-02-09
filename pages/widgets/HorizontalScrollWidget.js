@@ -28,27 +28,46 @@ class HorizontalScrollWidget extends BaseWidget {
         const box = await marqueeRow.boundingBox();
         if (!box) return;
 
-        // Capture initial state
-        // Since it's a CSS animation (likely), we check if position changes over time
-        // Or if it's draggable. Assuming CSS marquee:
-        const initialTransform = await marqueeRow.evaluate(el => window.getComputedStyle(el).transform);
+        // Multi-signal movement detection
+        const getMovementState = async () => {
+            return await marqueeRow.evaluate((el) => {
+                const style = window.getComputedStyle(el);
+                const firstChild = el.querySelector('.feedspace-element-marquee-item, .feedspace-element-post-box, .feedspace-review-item');
+                return {
+                    transform: style.transform,
+                    scrollLeft: el.scrollLeft,
+                    animation: style.animationName,
+                    transition: style.transitionProperty,
+                    childX: firstChild ? firstChild.getBoundingClientRect().left : 0
+                };
+            });
+        };
 
-        await this.page.waitForTimeout(2000);
+        const initial = await getMovementState();
+        await this.page.waitForTimeout(3000); // 3s wait to catch slow movement
+        const final = await getMovementState();
 
-        const finalTransform = await marqueeRow.evaluate(el => window.getComputedStyle(el).transform);
+        const hasTransformChange = initial.transform !== final.transform && final.transform !== 'none';
+        const hasScrollChange = Math.abs(initial.scrollLeft - final.scrollLeft) > 2;
+        const hasChildMovement = Math.abs(initial.childX - final.childX) > 2;
+        const hasActiveAnimation = initial.animation !== 'none' || initial.transition !== 'none';
 
-        if (initialTransform !== finalTransform && finalTransform !== 'none') {
-            this.logAudit('Horizontal Scrolling: Marquee animation detected (transform changed).');
+        if (hasTransformChange || hasScrollChange || hasChildMovement || hasActiveAnimation) {
+            let signal = [];
+            if (hasTransformChange) signal.push('transform');
+            if (hasScrollChange) signal.push('scrollLeft');
+            if (hasChildMovement) signal.push('child position');
+            if (hasActiveAnimation) signal.push('active CSS animation');
+
+            this.logAudit(`Horizontal Scrolling: Automatic movement detected via ${signal.join(', ')}.`);
             this.logAudit('Interaction: Horizontal scrolling behavior confirmed.');
         } else {
-            // Fallback: Check if user can scroll it manually? 
-            // Usually horizontal scroll widgets are auto-scrolling marquees.
-            this.logAudit('Horizontal Scrolling: No automatic movement validation (CSS transform static). Checking for overflow...', 'info');
+            this.logAudit('Horizontal Scrolling: No automatic movement detected after 3s delay. Checking for manual overflow...', 'info');
 
             const isScrollable = await marqueeRow.evaluate(el => el.scrollWidth > el.clientWidth);
             if (isScrollable) {
-                this.logAudit('Horizontal Scrolling: Content overflows and is horizontally scrollable.');
-                this.logAudit('Interaction: Horizontal scrolling confirmed via overflow check.');
+                this.logAudit('Horizontal Scrolling: Content overflows and is horizontally scrollable (manual only).');
+                this.logAudit('Interaction: Horizontal scrolling confirmed via overflow.');
             } else {
                 this.logAudit('Horizontal Scrolling: Content fits within viewport (no scroll needed).', 'info');
             }

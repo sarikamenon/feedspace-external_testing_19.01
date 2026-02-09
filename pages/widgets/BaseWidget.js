@@ -10,7 +10,7 @@ class BaseWidget {
         this.uiRules = config.uiRules || {};
         this.reportType = 'Browser';
         this.auditLog = [];
-        this.detailedFailures = []; // New for capturing exact locations
+        this.detailedFailures = []; // { type, card, feedId, description, location, snippet, severity, selector, isLimitation }
         this.accessibilityResults = [];
         this.reviewStats = { total: 0, text: 0, video: 0, audio: 0 };
 
@@ -24,12 +24,16 @@ class BaseWidget {
         this.context = this.page;
     }
 
-    logAudit(message, type = 'pass') {
-        this.auditLog.push({ message, type });
+    logAudit(message, type = 'pass', isLimitation = false) {
+        this.auditLog.push({ message, type, isLimitation });
         console.log(`[WIDGET-AUDIT] ${message}`);
     }
 
     async initContext() {
+        if (this.context && this.context !== this.page) {
+            console.log('Widget context already initialized (pre-assigned frame).');
+            return;
+        }
         console.log('Initializing widget context...');
         const frames = this.page.frames();
         for (const frame of frames) {
@@ -125,21 +129,37 @@ class BaseWidget {
             const card = cards.nth(i);
             const feedId = await card.getAttribute('data-feed-id') || 'N/A';
 
+            // Capture selector for identification
+            const cardSelector = await card.evaluate(el => {
+                let s = el.tagName.toLowerCase();
+                if (el.id) s += '#' + el.id;
+                else if (el.className) s += '.' + el.className.split(' ').join('.');
+                return s;
+            });
+
             // 1. Check specific date element if present
             const dateElement = card.locator('.date, .review-date, .feedspace-element-date, .feedspace-element-feed-date, .feedspace-element-date-text').first();
             if (await dateElement.count() > 0) {
                 const dText = await dateElement.innerText();
                 // Empty is OK per user request, but literal 'undefined' is not
                 if (dText.toLowerCase().includes('undefined') || dText.toLowerCase().includes('null') || dText.toLowerCase().includes('invalid date')) {
+                    const dateSelector = await dateElement.evaluate(el => {
+                        let s = el.tagName.toLowerCase();
+                        if (el.className) s += '.' + el.className.split(' ').join('.');
+                        return s;
+                    });
+
                     invalidDateCards.push(i + 1);
                     this.detailedFailures.push({
-                        type: 'Malformed dates',
+                        type: 'Date Consistency',
                         card: i + 1,
                         feedId: feedId,
                         location: 'Date Element',
                         snippet: await dateElement.innerHTML(),
-                        description: `Date field contains literal 'undefined' or 'null' (Optional field must be valid or empty). (ID: ${feedId})`,
-                        severity: 'High'
+                        description: `Date field contains literal 'undefined' or 'null' (Optional field must be valid or empty).`,
+                        severity: 'High',
+                        selector: dateSelector,
+                        isLimitation: false
                     });
                     continue; // Already flagged
                 }
@@ -151,13 +171,15 @@ class BaseWidget {
             if (cardHtml.toLowerCase().includes('undefined') || cardHtml.toLowerCase().includes('null') || cardText.toLowerCase().includes('invalid date')) {
                 invalidDateCards.push(i + 1);
                 this.detailedFailures.push({
-                    type: 'Malformed content',
+                    type: 'Date Consistency',
                     card: i + 1,
                     feedId: feedId,
                     location: 'General Card Content',
                     snippet: cardHtml.substring(0, 150).replace(/</g, '&lt;').replace(/>/g, '&gt;') + '...',
-                    description: `Review card contains leaked 'undefined' or 'null' strings. (ID: ${feedId})`,
-                    severity: 'High'
+                    description: `Review card contains leaked 'undefined' or 'null' strings.`,
+                    severity: 'High',
+                    selector: cardSelector,
+                    isLimitation: false
                 });
             }
         }
@@ -202,11 +224,16 @@ class BaseWidget {
 
                 if (!intersects) return null;
 
+                let selector = el.tagName.toLowerCase();
+                if (el.id) selector += '#' + el.id;
+                else if (el.className) selector += '.' + el.className.split(' ').join('.');
+
                 return {
                     index: i + 1,
                     box: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
                     html: el.innerHTML.substring(0, 100),
-                    feedId: el.getAttribute('data-feed-id') || 'N/A'
+                    feedId: el.getAttribute('data-feed-id') || 'N/A',
+                    selector: selector
                 };
             }).filter(d => d !== null);
         }, containerBox);
@@ -243,7 +270,9 @@ class BaseWidget {
                         description: `Overlapping cards detected.`,
                         location: 'Card Element (BoundingBox Check)',
                         snippet: c1.html + '...',
-                        severity: 'High'
+                        severity: 'High',
+                        selector: c1.selector,
+                        isLimitation: false
                     });
                 }
             }
@@ -492,12 +521,16 @@ class BaseWidget {
                     }
                 }
 
+                let selector = el.tagName.toLowerCase();
+                if (el.className) selector += '.' + el.className.split(' ').join('.');
+
                 return {
                     index: i,
                     isBroken,
                     cardId,
                     src: el.src,
-                    outerHTML: el.outerHTML.substring(0, 100)
+                    outerHTML: el.outerHTML.substring(0, 100),
+                    selector: selector
                 };
             }).filter(d => d !== null);
         });
@@ -516,7 +549,9 @@ class BaseWidget {
                         description: 'Broken Image detected',
                         location: 'Image Element',
                         snippet: data.outerHTML,
-                        severity: 'High'
+                        severity: 'High',
+                        selector: data.selector,
+                        isLimitation: false
                     });
                 }
             }
@@ -562,7 +597,11 @@ class BaseWidget {
                             id = `Card #${index}`;
                         }
                     }
-                    return { id };
+
+                    let selector = el.tagName.toLowerCase();
+                    if (el.className) selector += '.' + el.className.split(' ').join('.');
+
+                    return { id, selector };
                 });
 
                 // GLOBAL DEDUPLICATION Check
@@ -577,7 +616,9 @@ class BaseWidget {
                         description: 'Video Playback/Loading Error',
                         location: tag,
                         snippet: await vid.evaluate(el => el.outerHTML.substring(0, 100)),
-                        severity: 'High'
+                        severity: 'High',
+                        selector: identity.selector,
+                        isLimitation: false
                     });
                 }
             }
@@ -655,49 +696,98 @@ class BaseWidget {
         const a11yIssueEntry = this.auditLog.find(l => l.message.includes('Accessibility'));
 
         const styles = `
-            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 1000px; margin: 0 auto; padding: 30px; background: #f8f9fa; }
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 1100px; margin: 0 auto; padding: 30px; background: #f8f9fa; }
             h1, h2, h3 { color: #2c3e50; }
             .report-card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 30px; }
             .summary-item { margin-bottom: 12px; font-size: 16px; border-bottom: 1px solid #f0f0f0; padding-bottom: 8px; }
-            .status-pass { color: #27ae60; font-weight: bold; }
-            .status-fail { color: #e74c3c; font-weight: bold; }
-            .status-info { color: #3498db; font-weight: bold; }
             
-            table { width: 100%; border-collapse: collapse; margin: 20px 0; background: white; }
-            th, td { padding: 12px 15px; border: 1px solid #e1e4e8; text-align: left; }
+            table { width: 100%; border-collapse: collapse; margin: 20px 0; background: white; font-size: 14px; }
+            th, td { padding: 12px 15px; border: 1px solid #e1e4e8; text-align: left; vertical-align: top; }
             th { background-color: #f1f3f5; color: #495057; font-weight: 600; }
             tr:nth-child(even) { background-color: #fafbfc; }
             
-            .severity-critical { background: #fee2e2; color: #991b1b; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
-            .severity-high { background: #ffedd5; color: #9a3412; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+            .severity-critical { background: #fee2e2; color: #991b1b; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+            .severity-high { background: #ffedd5; color: #9a3412; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+            .severity-low { background: #dcfce7; color: #166534; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
             
-            .violation-card { border-left: 5px solid #e74c3c; background: #fff5f5; padding: 15px; margin-bottom: 20px; border-radius: 0 8px 8px 0; }
-            .target-path { color: #e83e8c; font-weight: bold; font-family: monospace; display: block; margin-bottom: 5px; }
-            .html-snippet { background: #2d3436; color: #fab1a0; padding: 10px; border-radius: 4px; display: block; overflow-x: auto; font-family: 'Courier New', Courier, monospace; font-size: 13px; }
+            .selector-tag { color: #e83e8c; font-weight: bold; font-family: monospace; font-size: 12px; background: #fff0f6; padding: 2px 4px; border-radius: 3px; border: 1px solid #ffdeeb; }
+            .html-snippet { background: #2d3436; color: #fab1a0; padding: 10px; border-radius: 4px; display: block; overflow-x: auto; font-family: 'Courier New', Courier, monospace; font-size: 11px; margin-top: 5px; }
+            
+            .issue-group { border-bottom: 1px solid #edf2f7; padding: 10px 0; }
+            .issue-group:last-child { border-bottom: none; }
             
             .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; margin-bottom: 30px; }
             .metric-box { background: #fff; border: 1px solid #e1e4e8; padding: 20px; border-radius: 8px; text-align: center; }
             .metric-val { font-size: 28px; font-weight: bold; color: #3498db; display: block; }
             .metric-label { font-size: 12px; color: #7f8c8d; text-transform: uppercase; letter-spacing: 1px; }
+
+            .defect-table th { background-color: #fff5f5; color: #c53030; }
+            .limitation-table th { background-color: #ebf8ff; color: #2b6cb0; }
         `;
 
-        // 2.1 Content & Card Issues Table Rows
-        let contentIssuesHtml = '';
-        this.detailedFailures.forEach(fail => {
-            contentIssuesHtml += `
-                <tr>
-                    <td>${fail.type}</td>
-                    <td>#${fail.card}</td>
-                    <td><code style="background:#f1f3f5; padding:2px 5px; border-radius:3px;">${fail.feedId || 'N/A'}</code></td>
-                    <td>
-                        ${fail.description}<br>
-                        <strong>Exact Location:</strong> ${fail.location}<br>
-                        <code class="html-snippet" style="font-size:11px; margin-top:5px;">${fail.snippet}</code>
-                    </td>
-                    <td><span class="severity-${fail.severity.toLowerCase()}">${fail.severity}</span></td>
-                </tr>`;
+        // Grouping Logic
+        const groupFailures = (failures) => {
+            const groups = {};
+            failures.forEach(f => {
+                const key = `${f.type}|${f.description}`;
+                if (!groups[key]) {
+                    groups[key] = {
+                        type: f.type,
+                        description: f.description,
+                        severity: f.severity,
+                        examples: []
+                    };
+                }
+                groups[key].examples.push(f);
+            });
+            return Object.values(groups);
+        };
+
+        const generateTableRows = (groupedFailures) => {
+            if (groupedFailures.length === 0) return '<tr><td colspan="5" style="text-align:center; color:green; padding: 20px;">✅ No issues detected in this category.</td></tr>';
+
+            return groupedFailures.map(group => {
+                const affectedCards = group.examples.map(e => `#${e.card}`).slice(0, 5).join(', ') + (group.examples.length > 5 ? '...' : '');
+                const selectors = [...new Set(group.examples.map(e => e.selector))].slice(0, 3).map(s => `<div class="selector-tag">${s}</div>`).join('');
+
+                const severityClass = (group.severity || 'info').toLowerCase();
+                const severityLabel = group.severity || 'Info';
+
+                return `
+                    <tr>
+                        <td style="font-weight:bold;">${group.type}</td>
+                        <td>${affectedCards} (${group.examples.length} affected)</td>
+                        <td>${selectors || '<span style="color:#999">N/A</span>'}</td>
+                        <td>
+                            ${group.description}
+                            <code class="html-snippet">${group.examples[0].snippet}</code>
+                        </td>
+                        <td><span class="severity-${severityClass}">${severityLabel}</span></td>
+                    </tr>`;
+            }).join('');
+        };
+
+        const defects = this.detailedFailures.filter(f => !f.isLimitation);
+        const limitations = this.detailedFailures.filter(f => f.isLimitation);
+
+        // Add automation-logged "info" as limitations if they look like skips/timeouts
+        this.auditLog.filter(l => l.type !== 'pass' && (l.message.includes('skipping') || l.message.includes('No') || l.message.includes('timeout'))).forEach(l => {
+            const alreadyIn = limitations.some(lim => lim.description === l.message);
+            if (!alreadyIn) {
+                limitations.push({
+                    type: 'Automation Alert',
+                    card: 'N/A',
+                    selector: 'Global',
+                    description: l.message,
+                    snippet: 'N/A',
+                    severity: 'Low',
+                    isLimitation: true
+                });
+            }
         });
-        if (!contentIssuesHtml) contentIssuesHtml = '<tr><td colspan="4" style="text-align:center; color:green;">✅ No content issues detected</td></tr>';
+
+        const defectsHtml = generateTableRows(groupFailures(defects));
+        const limitationsHtml = generateTableRows(groupFailures(limitations));
 
         // 2.2 Accessibility Detailed Results
         let a11yDetailedHtml = '';
@@ -709,7 +799,7 @@ class BaseWidget {
                 v.nodes.forEach(node => {
                     nodesHtml += `
                         <div style="margin-top:10px;">
-                            <span class="target-path">${node.target.join(' > ')}</span>
+                            <span class="selector-tag">${node.target.join(' > ')}</span>
                             <code class="html-snippet">${node.html.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code>
                         </div>`;
                 });
@@ -723,27 +813,24 @@ class BaseWidget {
             });
         });
 
-        // 2.3 Functionality & Layout Table
+        // 2.3 Feature Matrix
         const features = [
-            ['Widget container visibility', 'Widget container is visible'],
-            ['Feedspace Branding', 'Branding'],
-            ['Inline CTA', 'CTA'],
-            ['Layout Integrity', 'Layout Integrity'],
-            ['Alignment', 'Alignment'],
+            ['Widget Detection', 'widget detected'],
+            ['Branding Integrity', 'Branding'],
+            ['CTA Functionality', 'CTA'],
+            ['Layout & Alignment', 'Layout Integrity'],
             ['Text Readability', 'Text Readability'],
             ['Media Integrity', 'Media Integrity'],
             ['Date Consistency', 'Date Consistency'],
-            ['Navigation', 'Navigation'],
-            ['Load More Behavior', 'Load More'],
-            ['Read More / Content Expansion', 'Read More'],
-            ['Interaction', 'Interaction'],
+            ['Interactive Behavior', 'Interaction'],
+            ['Read More / Expansion', 'Read More'],
             ['Responsiveness', 'Responsiveness']
         ];
 
-        let funcRows = '';
+        let featureRows = '';
         features.forEach(([name, key]) => {
             const status = getAuditStatus(key);
-            funcRows += `
+            featureRows += `
                 <tr>
                     <td>${name}</td>
                     <td style="text-align:center;">${status.icon}</td>
@@ -756,87 +843,88 @@ class BaseWidget {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Widget UI Audit - ${widgetType}</title>
+    <title>Refined Widget UI Audit - ${widgetType}</title>
     <style>${styles}</style>
 </head>
 <body>
     <h1>1. Executive Summary</h1>
     <div class="report-card">
-        <p>The Reviews Widget was tested for UI integrity, content consistency, accessibility, and responsiveness.</p>
-        
         <div class="metrics-grid">
             <div class="metric-box"><span class="metric-val">${this.reviewStats.total}</span><span class="metric-label">Total Reviews</span></div>
             <div class="metric-box"><span class="metric-val">${this.reviewStats.text}</span><span class="metric-label">Text Reviews</span></div>
             <div class="metric-box"><span class="metric-val">${this.reviewStats.video}</span><span class="metric-label">Video Reviews</span></div>
             <div class="metric-box"><span class="metric-val">${this.reviewStats.audio}</span><span class="metric-label">Audio Reviews</span></div>
-            ${typeof this.reviewStats.cta !== 'undefined' ? `<div class="metric-box"><span class="metric-val">${this.reviewStats.cta}</span><span class="metric-label">CTA Buttons</span></div>` : ''}
         </div>
 
-        <div class="summary-item">${getAuditStatus('container is visible').icon} Widget container is visible and functional.</div>
-        <div class="summary-item">${getAuditStatus('Reviews Segmented').icon} Reviews Segmentation: ${this.reviewStats.total} reviews loaded (Text: ${this.reviewStats.text}, Video: ${this.reviewStats.video}, Audio: ${this.reviewStats.audio}${typeof this.reviewStats.cta !== 'undefined' ? `, CTAs: ${this.reviewStats.cta}` : ''})</div>
-        <div class="summary-item">${getAuditStatus('Media Integrity').icon} Media Integrity: ${getAuditStatus('Media Integrity').type === 'fail' ? 'Broken media found.' : 'All images and videos loaded successfully.'}</div>
-        <div class="summary-item">${getAuditStatus('Date Consistency').icon} Date Integrity: ${getAuditStatus('Date Consistency').type === 'fail' ? 'Malformed or undefined dates found.' : 'All dates are valid and consistent.'}</div>
-        <div class="summary-item">${getAuditStatus('Layout Integrity').icon} Layout & Alignment: ${getAuditStatus('Layout Integrity').type === 'fail' ? 'Layout issues detected.' : 'Cards aligned and layout is functional.'}</div>
+        <div class="summary-item">${getAuditStatus('container is visible').icon} Widget Visibility: Validated</div>
+        <div class="summary-item">${getAuditStatus('Media Integrity').icon} Media Verification: ${this.detailedFailures.some(f => f.type === 'Media Integrity') ? 'Defects found' : 'Passed'}</div>
+        <div class="summary-item">${getAuditStatus('Layout Integrity').icon} Structural Integrity: ${this.detailedFailures.some(f => f.type === 'Layout Integrity') ? 'Defects found' : 'Passed'}</div>
         
-        <div class="summary-item" style="margin-top:20px; padding:15px; background:#fff3f3; border-radius:8px; border-left:5px solid #e74c3c;">
-            <strong>❌ Critical Issues:</strong> 
-            ${contentIssueEntry?.type === 'fail' ? 'Missing review content, ' : ''}
-            ${dateIssueEntry?.type === 'fail' ? 'undefined dates, ' : ''}
-            ${totalA11yViolations > 0 ? 'accessibility violations.' : ''}
-            ${(!contentIssuesHtml.includes('❌') && totalA11yViolations === 0) ? 'None' : ''}
+        <div style="margin-top:20px; padding:15px; background:#fff5f5; border-radius:8px; border-left:5px solid #c53030;">
+            <strong>⚠️ Audit Findings:</strong> 
+            Found ${defects.length} functional UI defects and ${limitations.length} automation/data limitations.
         </div>
-        
-        <p style="margin-top:20px; font-style:italic; color:#7f8c8d;">
-            Overall, the widget functions correctly, but content and accessibility issues need immediate attention.
-        </p>
     </div>
 
     <h1>2. Detailed Findings</h1>
     
-    <h2>2.1 Content & Card Issues</h2>
-    <table>
+    <h2>2.1 Functional UI Defects (Requires Dev Attention)</h2>
+    <p>These issues represent visible bugs in the widget UI or content delivery.</p>
+    <table class="defect-table">
         <thead>
             <tr>
-                <th>Issue</th>
-                <th>Card Index</th>
-                <th>Feed ID</th>
-                <th>Description</th>
-                <th>Severity</th>
+                <th style="width:150px;">Defect Type</th>
+                <th style="width:200px;">Impacted Elements</th>
+                <th style="width:200px;">CSS / Unique ID</th>
+                <th>Description & Snippet</th>
+                <th style="width:100px;">Severity</th>
             </tr>
         </thead>
         <tbody>
-            ${contentIssuesHtml}
+            ${defectsHtml}
         </tbody>
     </table>
 
-    <h2>2.2 Accessibility Issues</h2>
+    <h2>2.2 Automation & Data Limitations</h2>
+    <p>These entries indicate scenarios where data was missing (e.g., no reviews) or automation could not perform a check.</p>
+    <table class="limitation-table">
+        <thead>
+            <tr>
+                <th style="width:150px;">Check Type</th>
+                <th style="width:150px;">Scope</th>
+                <th style="width:200px;">Identification</th>
+                <th>Observation</th>
+                <th style="width:100px;">Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${limitationsHtml}
+        </tbody>
+    </table>
+
+    <h2>2.3 Accessibility Audit</h2>
     <div class="report-card">
-        <p><strong>${totalA11yViolations} violations detected</strong> by browser accessibility audit (e.g., missing alt text, button labels, ARIA roles)</p>
-        ${a11yDetailedHtml || '<p style="color:green;">✅ No violations found.</p>'}
+        ${a11yDetailedHtml || '<p style="color:green; font-weight:bold;">✅ No accessibility violations detected via browser audit.</p>'}
     </div>
 
-    <h2>2.3 Functionality & Layout</h2>
+    <h2>2.4 Full Feature Matrix</h2>
     <table>
         <thead>
-            <tr>
-                <th>Feature</th>
-                <th>Status</th>
-                <th>Notes</th>
-            </tr>
+            <tr><th>Feature</th><th>Status</th><th>Notes</th></tr>
         </thead>
         <tbody>
-            ${funcRows}
+            ${featureRows}
         </tbody>
     </table>
 
-    <div style="text-align: center; margin-top: 50px; color: #bdc3c7; font-size: 13px;">
+    <div style="text-align: center; margin-top: 50px; color: #bdc3c7; font-size: 12px; padding-bottom: 50px;">
         Generated by Antigravity Automation Agent on ${date} | URL: ${this.config?.page?.url || 'N/A'}
     </div>
 </body>
 </html>`;
 
         fs.writeFileSync(reportPath, htmlContent);
-        console.log(`Rich HTML Report generated: ${reportPath}`);
+        console.log(`Grouped HTML Report generated: ${reportPath}`);
     }
 }
 
