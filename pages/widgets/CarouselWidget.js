@@ -63,6 +63,82 @@ class CarouselWidget extends BaseWidget {
         await this.page.waitForTimeout(500);
         this.logAudit('Behavior: Swipe gesture simulated.');
     }
+
+    async validateReadMore() {
+        console.log('Running Carousel-specific Read More functionality check...');
+
+        const readMoreSelector = '.feedspace-element-read-more, .feedspace-read-less-btn.feedspace-element-read-more, .feedspace-read-more-text';
+        const expandedSelector = '.feedspace-read-less-text, .feedspace-element-read-less, .feedspace-element-read-more-open, .feedspace-read-less-btn, .feedspace-element-read-more:not(:visible), span:has-text("Read less"), button:has-text("Read less")';
+
+        const triggers = this.context.locator(readMoreSelector);
+        const count = await triggers.count();
+
+        if (count === 0) {
+            this.logAudit('Read More: No expansion triggers found (all text likely visible).', 'info');
+            return;
+        }
+
+        let expansionResult = null;
+        let collapseResult = null;
+
+        for (let i = 0; i < count; i++) {
+            const btn = triggers.nth(i);
+            if (await btn.isVisible().catch(() => false)) {
+                const card = btn.locator('xpath=./ancestor::*[contains(@class, "feedspace-element-review-contain-box") or contains(@class, "feedspace-review-box") or contains(@class, "feedspace-element-post-box") or contains(@class, "feedspace-review-item")][1]').first();
+
+                const initialClasses = await btn.getAttribute('class').catch(() => '');
+                const initialText = await btn.innerText().catch(() => '');
+                const initialHeight = await card.evaluate(el => el.offsetHeight).catch(() => 0);
+
+                try {
+                    await btn.scrollIntoViewIfNeeded().catch(() => { });
+                    await btn.click({ force: true });
+                    await this.page.waitForTimeout(1200);
+
+                    const currentHeight = await card.evaluate(el => el.offsetHeight).catch(() => 0);
+                    const currentClasses = await btn.getAttribute('class').catch(() => '');
+                    const currentText = await btn.innerText().catch(() => '');
+                    const hasReadLessElement = await card.locator(expandedSelector).first().isVisible().catch(() => false);
+
+                    const heightIncreased = currentHeight > initialHeight + 3;
+                    const stateChanged = initialClasses !== currentClasses || initialText !== currentText;
+
+                    if (hasReadLessElement || heightIncreased || stateChanged) {
+                        expansionResult = `Verified (+${currentHeight - initialHeight}px)`;
+
+                        // Validating Collapse
+                        const collapseBtn = card.locator(expandedSelector).first();
+                        if (await collapseBtn.isVisible()) {
+                            await collapseBtn.click({ force: true });
+                            await this.page.waitForTimeout(1000);
+
+                            const heightCollapsed = await card.evaluate(el => el.offsetHeight).catch(() => currentHeight);
+                            const isStillExpanded = await collapseBtn.isVisible().catch(() => false);
+
+                            if (heightCollapsed < currentHeight - 2 || !isStillExpanded) {
+                                collapseResult = `Verified (-${currentHeight - heightCollapsed}px)`;
+                            } else {
+                                collapseResult = 'Unscaled (height did not decrease)';
+                            }
+                        } else {
+                            collapseResult = 'Trigger missing';
+                        }
+                        break;
+                    }
+                } catch (e) {
+                    console.warn(`Interaction failed on trigger #${i}: ${e.message}`);
+                }
+            }
+        }
+
+        if (expansionResult && collapseResult) {
+            this.logAudit(`Read More / Less: Full cycle validated. Expansion: ${expansionResult}, Collapse: ${collapseResult}.`);
+        } else if (expansionResult) {
+            this.logAudit(`Read More: Expansion validated (${expansionResult}), but Collapse check had issue: ${collapseResult || 'N/A'}.`, 'info');
+        } else if (count > 0) {
+            this.logAudit('Read More: Expansion triggers found but failed to verify state change after click.', 'info');
+        }
+    }
 }
 
 module.exports = { CarouselWidget };

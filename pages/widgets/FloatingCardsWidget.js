@@ -142,9 +142,15 @@ class FloatingCardsWidget extends BaseWidget {
                         ];
                         const popupReadLess = popup.locator(retractionSelectors.join(', ')).first();
                         if (await popupReadLess.isVisible()) {
+                            const beforeLessHeight = await popup.evaluate(el => el.offsetHeight).catch(() => 0);
                             await popupReadLess.click({ force: true });
-                            this.expansionSuccessCount++;
-                            await this.page.waitForTimeout(100); // Aggressively Reduced from 300ms
+                            await this.page.waitForTimeout(500);
+                            const afterLessHeight = await popup.evaluate(el => el.offsetHeight).catch(() => beforeLessHeight);
+
+                            if (afterLessHeight < beforeLessHeight || !(await popupReadLess.isVisible())) {
+                                console.log('Read Less: Successfully validated collapse in Floating Card popup.');
+                                this.expansionSuccessCount++;
+                            }
                         }
                     }
                 } else {

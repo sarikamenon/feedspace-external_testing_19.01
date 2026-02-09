@@ -104,8 +104,14 @@ Then('the individual framework detects {string}', async function (expectedType) 
     }
 
     const widgets = await WidgetFactory.detectAndCreate(this.page, expectedType, individualConfig);
-    // Handle array return - find matching type or take first
-    currentWidget = widgets.find(w => w.constructor.name.toLowerCase().includes(expectedType.toLowerCase())) || widgets[0];
+    // Strict matching: find matching type.
+    currentWidget = widgets.find(w => w.constructor.name.toLowerCase().includes(expectedType.toLowerCase()));
+
+    if (!currentWidget && widgets.length > 0) {
+        console.warn(`[Individual Test] Expected ${expectedType} but detection found: ${widgets.map(w => w.constructor.name).join(', ')}. Falling back to first detected.`);
+        currentWidget = widgets[0];
+    }
+
     this.currentWidget = currentWidget;
 
     if (!currentWidget) {

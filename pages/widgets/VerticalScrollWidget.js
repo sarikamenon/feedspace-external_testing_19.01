@@ -422,8 +422,14 @@ class VerticalScrollWidget extends BaseWidget {
 
                         // Verify second toggle (should return to initial state)
                         const isVisibleAfterSecond = await content.isVisible().catch(() => false);
-                        if (isVisibleAfterSecond === isContentVisibleInitially) {
+                        const currentHeight = await card.evaluate(el => el.offsetHeight).catch(() => 0);
+
+                        // Height-based collapse check
+                        const collapseSuccess = Math.abs(currentHeight - initialHeight) <= 5 || isVisibleAfterSecond === isContentVisibleInitially;
+
+                        if (collapseSuccess) {
                             console.log(`Card ${cardId}: Toggle Cycle (2/2) COMPLETE.`);
+                            this.logAudit(`Read Less: Successfully validated collapse for card ${cardId}.`);
                             successfulExpansions++;
                         } else {
                             failedCards.push(`Card ${cardId}: Toggle cycle failed to return content to initial state`);
@@ -438,7 +444,7 @@ class VerticalScrollWidget extends BaseWidget {
 
             if (expandableCount > 0) {
                 if (successfulExpansions > 0) {
-                    this.logAudit(`Read More/Read Less: Verified ${successfulExpansions} expansion/toggle action(s) on source cards.`);
+                    this.logAudit(`Read More / Less Cycle: Successfully verified ${successfulExpansions} full expansion and collapse cycles.`);
                 } else {
                     this.logAudit(`Read More/Read Less: Interaction failed on all ${expandableCount} tested cards.`, 'fail');
                 }

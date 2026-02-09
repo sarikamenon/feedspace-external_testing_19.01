@@ -75,6 +75,77 @@ class MasonryWidget extends BaseWidget {
             this.logAudit('Behavior: No Load More button found (or all content already loaded).', 'info');
         }
     }
+
+    async validateReadMore() {
+        console.log('Running Masonry-specific Read More functionality check...');
+        const readMoreSelectors = ['.feedspace-element-read-more', '.read-more', '.feedspace-read-more-text', '.feedspace-read-less-btn'];
+        const expandedSelector = '.feedspace-read-less-text, .feedspace-element-read-less, .feedspace-element-read-more:not(.feedspace-element-read-more-open), span:has-text("Read less")';
+
+        let targetTrigger = null;
+        let targetCard = null;
+
+        for (const selector of readMoreSelectors) {
+            const triggers = this.context.locator(selector);
+            const count = await triggers.count();
+
+            for (let i = 0; i < count; i++) {
+                const el = triggers.nth(i);
+                if (await el.isVisible().catch(() => false)) {
+                    targetTrigger = el;
+                    targetCard = el.locator('xpath=./ancestor::*[contains(@class, "feedspace-element-review-contain-box") or contains(@class, "feedspace-element-feed-box") or contains(@class, "feedspace-review-item")][1]').first();
+                    break;
+                }
+            }
+            if (targetTrigger) break;
+        }
+
+        if (targetTrigger && targetCard) {
+            let expansionResult = null;
+            let collapseResult = null;
+
+            const initialHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => 0);
+
+            try {
+                await targetTrigger.scrollIntoViewIfNeeded().catch(() => { });
+                await targetTrigger.click({ force: true });
+                await this.page.waitForTimeout(1000);
+
+                const currentHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => 0);
+                const hasReadLess = await targetCard.locator(expandedSelector).first().isVisible().catch(() => false);
+
+                if (hasReadLess || currentHeight > initialHeight + 5) {
+                    expansionResult = `Verified (+${currentHeight - initialHeight}px)`;
+
+                    // --- Validate Read Less (Collapse) ---
+                    const collapseBtn = targetCard.locator(expandedSelector).first();
+                    if (await collapseBtn.isVisible()) {
+                        await collapseBtn.click({ force: true });
+                        await this.page.waitForTimeout(800);
+                        const heightCollapsed = await targetCard.evaluate(el => el.offsetHeight).catch(() => currentHeight);
+                        if (heightCollapsed < currentHeight - 2 || !(await collapseBtn.isVisible().catch(() => false))) {
+                            collapseResult = `Verified (-${currentHeight - heightCollapsed}px)`;
+                        } else {
+                            collapseResult = 'Collapse failed (height did not decrease)';
+                        }
+                    } else {
+                        collapseResult = 'Trigger missing';
+                    }
+                }
+
+                if (expansionResult && collapseResult) {
+                    this.logAudit(`Read More / Less: Full cycle validated in Masonry. (${expansionResult} -> ${collapseResult}).`);
+                } else if (expansionResult) {
+                    this.logAudit(`Read More: Expansion validated (${expansionResult}), but Collapse check failed: ${collapseResult || 'N/A'}.`, 'info');
+                } else {
+                    this.logAudit('Read More: Expansion triggers found but failed to verify state change.', 'info');
+                }
+            } catch (e) {
+                this.logAudit(`Read More: Interaction failed - ${e.message.split('\n')[0]}`, 'info');
+            }
+        } else {
+            this.logAudit('Read More: No expansion triggers found in Masonry layout.', 'info');
+        }
+    }
 }
 
 module.exports = { MasonryWidget };

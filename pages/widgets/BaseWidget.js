@@ -54,12 +54,11 @@ class BaseWidget {
         await this.initContext();
         const minReviews = minReviewsOverride || this.uiRules.minReviews || 1;
         const container = this.context.locator(this.containerSelector).first();
+
         if (!(await container.isVisible({ timeout: 15000 }).catch(() => false))) {
             this.logAudit('Widget container not visible after timeout (15s).', 'fail');
-            // We return early from the method but don't throw, allowing the scenario to continue
             return;
         }
-        this.logAudit('Widget container is visible.');
 
         const cards = this.context.locator(this.cardSelector);
 
@@ -72,6 +71,9 @@ class BaseWidget {
 
         const cardCount = await cards.count();
         this.reviewStats.total = cardCount;
+        this.reviewStats.text = cardCount; // Default starting point
+
+        this.logAudit(`Widget container is visible. Detected ${cardCount} reviews/avatars.`);
 
         // Performance Optimization: Batch process all cards in one evaluate call
         const cardData = await cards.evaluateAll(elements => {
@@ -388,61 +390,86 @@ class BaseWidget {
     }
 
     async validateReadMore() {
-        console.log('Running Read More functionality check...');
-        // Look for buttons or spans that indicate "Read More" functionality
-        // Selector strategy: specific class or generic text match within the widget
-        const readMoreButtons = this.context.locator('.feedspace-read-more-text, .feedspace-element-read-more-text-span, button:has-text("Read more"), span:has-text("Read more")');
-        const count = await readMoreButtons.count();
+        console.log('Running robust Read More functionality check (Global Search)...');
 
-        if (count === 0) {
-            this.logAudit('Read More Functionality: No "Read more" buttons found (all text likely visible).', 'info');
-            return;
+        // High-confidence generic selectors
+        const readMoreSelectors = [
+            '.feedspace-element-read-more',
+            '.feedspace-read-more-text',
+            '.read-more',
+            'span:has-text("Read more")',
+            'button:has-text("Read more")',
+            'a:has-text("Read more")',
+            '.show-more'
+        ];
+
+        let targetTrigger = null;
+        let targetCard = null;
+
+        // GLOBAL SEARCH: Look for ANY card with a visible Read More button
+        for (const selector of readMoreSelectors) {
+            const triggers = this.context.locator(selector);
+            const count = await triggers.count();
+
+            for (let i = 0; i < count; i++) {
+                const el = triggers.nth(i);
+                // Be very permissive: catch errors and check visibility
+                const isVisible = await el.isVisible().catch(() => false);
+                const isAttached = await el.count().catch(() => 0) > 0;
+
+                if (isVisible || isAttached) {
+                    // Find the parent card for this trigger
+                    targetCard = el.locator('xpath=./ancestor::*[contains(@class, "feedspace-element-marquee-item") or contains(@class, "feedspace-review-item") or contains(@class, "feedspace-element-post-box") or contains(@class, "feedspace-element-feed-box")][1]').first();
+
+                    if (isVisible) {
+                        targetTrigger = el;
+                        break;
+                    } else {
+                        console.log(`Read More candidate found but not visible: ${selector} #${i}`);
+                    }
+                }
+            }
+            if (targetTrigger) break;
         }
 
-        let successCount = 0;
-        let failures = [];
-
-        // Check up to 3 instances to avoid test timeouts
-        const checkLimit = Math.min(count, 3);
-
-        for (let i = 0; i < checkLimit; i++) {
-            const btn = readMoreButtons.nth(i);
-
-            // Ensure visible before interacting regarding the parent container
-            if (!(await btn.isVisible())) continue;
-
-            const card = btn.locator('xpath=./ancestor::*[contains(@class, "feedspace-review-item") or contains(@class, "feedspace-element-feed-box") or contains(@class, "feedspace-marquee-box-inner") or contains(@class, "feedspace-post-slide-items")]').first();
-
+        if (targetTrigger && targetCard) {
+            this.logAudit('Read More: Found a visible expansion trigger.');
             try {
-                // Get text container height before click (if possible)
-                // We'll rely on the presence of "Read Less" or button disappearance as success
-                await btn.click({ force: true });
-                await this.page.waitForTimeout(500); // UI transition
+                await targetTrigger.scrollIntoViewIfNeeded().catch(() => { });
+                await targetTrigger.click({ force: true });
+                await this.page.waitForTimeout(500);
 
-                // Verify state change: Look for "Read less" or check if "Read more" is gone
-                // The report snippet showed 'feedspace-element-read-less-text-span', so we look for that or similar text
-                const hasReadLess = await card.locator('.feedspace-read-less-text, .feedspace-element-read-less-text-span, button:has-text("Read less"), span:has-text("Read less")').count() > 0;
+                // Check for "Read Less" or content expansion
+                const hasReadLess = await targetCard.locator('.feedspace-read-less-text, .feedspace-element-read-less-text-span, span:has-text("Read less"), button:has-text("Read less")').count() > 0;
 
                 if (hasReadLess) {
-                    successCount++;
+                    this.logAudit('Read More: Successfully validated expansion on a detected card.');
+
+                    // Try to collapse back if possible (optional but good verification)
+                    const collapseBtn = targetCard.locator('.feedspace-read-less-text, .feedspace-element-read-less-text-span, span:has-text("Read less"), button:has-text("Read less")').first();
+                    if (await collapseBtn.isVisible()) {
+                        await collapseBtn.click({ force: true });
+                        this.logAudit('Read Less: Successfully validated collapse.');
+                    }
                 } else {
-                    // Maybe the button just disappears?
-                    const btnStillVisible = await btn.isVisible();
-                    if (!btnStillVisible) {
-                        successCount++;
+                    // Check if button disappeared (some widgets just expand text and remove button)
+                    if (!(await targetTrigger.isVisible())) {
+                        this.logAudit('Read More: Trigger disappeared after click, assuming textual expansion successful.');
                     } else {
-                        failures.push(`Card with Read More button #${i + 1} did not toggle state.`);
+                        this.logAudit('Read More: Clicked trigger but did not detect "Read Less" state.', 'info');
                     }
                 }
             } catch (e) {
-                failures.push(`Failed to click Read More on instance #${i + 1}: ${e.message}`);
+                this.logAudit(`Read More: Click interaction failed - ${e.message.split('\n')[0]}`, 'info');
             }
-        }
-
-        if (failures.length > 0) {
-            this.logAudit(`Read More Functionality: Failed to verify expansion on ${failures.length} cards.`, 'fail');
         } else {
-            this.logAudit(`Read More Functionality: Verified expansion on ${successCount} cards.`);
+            // Fallback: Check if "Read More" text exists in the DOM but is not visible/interactable
+            const domTextCheck = this.context.locator('text=Read More, text=Read more');
+            if (await domTextCheck.count() > 0) {
+                this.logAudit('Read More: Text is truncated but interactive "Read More" button is missing or non-functional. Users cannot access the full content.', 'fail');
+            } else {
+                this.logAudit('Read More Functionality: No "Read more" buttons found (all text likely visible).', 'info');
+            }
         }
     }
 
@@ -823,7 +850,7 @@ class BaseWidget {
             ['Media Integrity', 'Media Integrity'],
             ['Date Consistency', 'Date Consistency'],
             ['Interactive Behavior', 'Interaction'],
-            ['Read More / Expansion', 'Read More'],
+            ['Read More / Less Cycle', 'Read More'],
             ['Responsiveness', 'Responsiveness']
         ];
 

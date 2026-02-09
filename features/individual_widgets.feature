@@ -10,6 +10,7 @@ Feature: Individual Widget Validation (Dedicated)
     Then the individual framework detects "Carousel"
     And the individual widget should be visible with valid reviews
     And I verify individual widget-specific behaviors for "Carousel"
+    And individual verify optional UI elements if present
     And individual user performs generic accessibility audit
     And I save the intermediate individual report for "Carousel"
     When I reload the widget page

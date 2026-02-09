@@ -12,7 +12,7 @@ Feature: Embedded Web Widget Testing
     And the widget should follow the layout and branding guidelines
     And I perform a comprehensive UI audit
     And I save the intermediate report for "DetectedWidget"
-    When I reload the widget page
+    When I reload the page to verify persistence
     Then I verify widget responsiveness on mobile
     And I generate the final UI audit report for "DetectedWidget"
 

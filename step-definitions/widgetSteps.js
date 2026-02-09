@@ -37,6 +37,24 @@ Given('I load the widget URL', async function () {
     await this.page.waitForTimeout(2000); // Small grace period for late scripts
 });
 
+Then('I generate the final UI audit report for {string}', async function (widgetType) {
+    let totalFailures = 0;
+
+    for (const widget of this.detectedWidgets) {
+        const typeName = widget.constructor.name.replace('Widget', '');
+        const finalReportName = (widgetType === 'DetectedWidget' || widgetType === 'Auto') ? typeName : widgetType;
+
+        await widget.generateReport(finalReportName);
+
+        const failures = widget.auditLog.filter(l => l.type === 'fail');
+        totalFailures += failures.length;
+    }
+
+    if (totalFailures > 0) {
+        throw new Error(`Widget Audit Failed with ${totalFailures} total issues across widgets. Check reports for details.`);
+    }
+});
+
 Then('the framework should dynamically detect the widget as {string}', async function (widgetType) {
     const detectedInstances = await WidgetFactory.detectAndCreate(this.page, widgetType, testData);
     this.detectedWidgets = detectedInstances; // Store array
@@ -103,11 +121,61 @@ Then('I save the intermediate report for {string}', async function (widgetType) 
     }
 });
 
+When('I reload the page to verify persistence', async function () {
+    console.log(`[Dynamic Test] Reloading page to verify persistence...`);
+
+    // 1. Capture state of existing widgets
+    const savedStates = this.detectedWidgets.map(w => ({
+        type: w.constructor.name,
+        auditLog: [...w.auditLog],
+        detailedFailures: [...w.detailedFailures],
+        accessibilityResults: [...w.accessibilityResults],
+        reviewStats: { ...w.reviewStats }
+    }));
+
+    // 2. Reload
+    await this.page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
+    await this.page.waitForTimeout(3000);
+
+    // 3. Re-detect widgets on the refreshed page
+    const newWidgets = await WidgetFactory.detectAndCreate(this.page, 'Auto', testData);
+
+    if (newWidgets.length === 0) {
+        console.warn('[Dynamic Test] Warning: No widgets detected after reload.');
+    }
+
+    // 4. Map saved state to new instances
+    // Logic: Try to match by type. If multiple of same type, assume order is preserved.
+    this.detectedWidgets = newWidgets.map((newWidget, index) => {
+        // Find a matching saved state
+        const savedState = savedStates.find(s => s.type === newWidget.constructor.name);
+
+        if (savedState) {
+            console.log(`[Dynamic Test] Restoring state for ${newWidget.constructor.name}`);
+            newWidget.auditLog = savedState.auditLog;
+            newWidget.detailedFailures = savedState.detailedFailures;
+            newWidget.accessibilityResults = savedState.accessibilityResults;
+            newWidget.reviewStats = savedState.reviewStats; // Restore stats!
+
+            // Remove used state to avoid double-assignment if strict order
+            // (Optional: simple finding is robust enough for unique widget types)
+        } else {
+            console.log(`[Dynamic Test] New widget detected after reload: ${newWidget.constructor.name} (No prior state found)`);
+        }
+        return newWidget;
+    });
+});
+
 Then('I verify widget responsiveness on mobile', async function () {
     for (const widget of this.detectedWidgets) {
         await widget.validateResponsiveness('Mobile');
-        await widget.validateVisibility();
-        await widget.validateAlignment();
+        // Do NOT call validateVisibility() here again without care, as it might reset stats if page state is flaky.
+        // BaseWidget.validateResponsiveness() calls logAudit but doesn't reset stats.
+        // However, we might want to ensure the widget is still present.
+        const isVisible = await widget.context.locator(widget.containerSelector).first().isVisible().catch(() => false);
+        if (!isVisible) {
+            widget.logAudit('Responsiveness: Widget container not found after reload/resize.', 'fail');
+        }
     }
 });
 

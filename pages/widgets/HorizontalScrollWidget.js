@@ -156,20 +156,31 @@ class HorizontalScrollWidget extends BaseWidget {
                 const hasReadLess = await targetCard.locator('.feedspace-element-read-less, .feedspace-element-read-less-text-span, span:has-text("Read less")').count() > 0;
 
                 if (hasReadLess) {
-                    this.logAudit('Read More: Successfully validated expansion on a detected card.');
+                    const expansionResult = 'Verified (Expansion detected)';
+                    let collapseResult = 'Not tested';
 
-                    // Try to collapse back
                     const collapseBtn = targetCard.locator('.feedspace-element-read-less, .feedspace-element-read-less-text-span, span:has-text("Read less")').first();
                     if (await collapseBtn.isVisible()) {
+                        const beforeCollapseHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => 0);
                         await collapseBtn.click({ force: true });
-                        this.logAudit('Read Less: Successfully validated collapse.');
+                        await this.page.waitForTimeout(800);
+                        const afterCollapseHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => beforeCollapseHeight);
+                        if (afterCollapseHeight < beforeCollapseHeight - 2 || !(await collapseBtn.isVisible())) {
+                            collapseResult = `Verified (-${beforeCollapseHeight - afterCollapseHeight}px)`;
+                        } else {
+                            collapseResult = 'Collapse failed (height did not decrease)';
+                        }
+                    }
+
+                    if (collapseResult.startsWith('Verified')) {
+                        this.logAudit(`Read More / Less Cycle: Successfully validated full toggle cycle. (${expansionResult} -> ${collapseResult}).`);
+                    } else {
+                        this.logAudit(`Read More: Expansion validated (${expansionResult}), but Collapse check had issue: ${collapseResult}.`, 'info');
                     }
                 } else {
-                    this.logAudit('Read More: Clicked trigger but did not detect "Read Less" state.', 'fail');
+                    this.logAudit('Read More: Clicked trigger but did not detect expansion state.', 'fail');
                 }
-
             } catch (e) {
-                // Changed "Interaction failed" to "Action failed" to avoid polluting the 'Interaction' column in report
                 this.logAudit(`Read More: Expanded action failed - ${e.message}`, 'info');
             }
         } else {

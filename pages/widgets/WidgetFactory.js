@@ -41,9 +41,9 @@ class WidgetFactory {
             carousel: '.feedspace-carousel-widget, .feedspace-element-container.feedspace-carousel-widget',
             stripslider: '.feedspace-marque-main-wrap, .feedspace-show-overlay',
             avatargroup: '.fe-feedspace-avatar-group-widget-wrap, .fe-widget-center',
-            avatarslider: '.feedspace-single-review-widget, .feedspace-show-left-right-shadow',
+            avatarslider: '.feedspace-single-review-widget',
             verticalscroll: '.feedspace-element-feed-top-bottom-marquee, .feedspace-top-bottom-shadow',
-            horizontalscroll: '.feedspace-element-horizontal-scroll-widget, .feedspace-left-right-shadow, .feedspace-element-container.feedspace-element-horizontal-scroll-widget',
+            horizontalscroll: '.feedspace-element-horizontal-scroll-widget, .feedspace-element-container.feedspace-element-horizontal-scroll-widget',
             masonry: '.feedspace-element-container:not(.feedspace-carousel-widget):not(.feedspace-element-horizontal-scroll-widget)'
         };
 
@@ -63,6 +63,14 @@ class WidgetFactory {
                 if (frameUrl.includes('ec0aaf26-8a39-4186-8caa-84ae5b77fcd9')) {
                     console.log('Widget detected: horizontalscroll via API Key in iframe.');
                     detectedInfo.push({ type: 'horizontalscroll', frame });
+                }
+
+
+                if (frameUrl.includes('b8e1c19e-2550-4a58-ae58-d7708c3e3405')) {
+                    if (await frame.locator(detectors.avatarslider).first().isVisible({ timeout: 1000 }).catch(() => false)) {
+                        console.log('Widget detected: avatarslider via API Key and class verification.');
+                        detectedInfo.push({ type: 'avatarslider', frame });
+                    }
                 }
 
                 // 2. Selector-based Detection
