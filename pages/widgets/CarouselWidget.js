@@ -92,7 +92,11 @@ class CarouselWidget extends BaseWidget {
 
                 try {
                     await btn.scrollIntoViewIfNeeded().catch(() => { });
-                    await btn.click({ force: true });
+                    // Try standard click, fallback to JS click if element is clipped/outside viewport
+                    await btn.click({ force: true, timeout: 5000 }).catch(async (e) => {
+                        console.warn(`Click failed: ${e.message}. Attempting JS click...`);
+                        await btn.evaluate(el => el.click());
+                    });
                     await this.page.waitForTimeout(1200);
 
                     const currentHeight = await card.evaluate(el => el.offsetHeight).catch(() => 0);

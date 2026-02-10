@@ -43,8 +43,8 @@ class WidgetFactory {
             avatargroup: '.fe-feedspace-avatar-group-widget-wrap, .fe-widget-center',
             avatarslider: '.feedspace-single-review-widget',
             verticalscroll: '.feedspace-element-feed-top-bottom-marquee, .feedspace-top-bottom-shadow',
-            horizontalscroll: '.feedspace-element-horizontal-scroll-widget, .feedspace-element-container.feedspace-element-horizontal-scroll-widget',
-            masonry: '.feedspace-element-container:not(.feedspace-carousel-widget):not(.feedspace-element-horizontal-scroll-widget)'
+            horizontalscroll: '.feedspace-element-horizontal-scroll-widget, .feedspace-left-right-shadow, .feedspace-element-d12-marquee-row, [class*="horizontal-scroll"]',
+            masonry: '.feedspace-element-container:not(.feedspace-carousel-widget):not(.feedspace-element-horizontal-scroll-widget):not(.feedspace-element-feed-top-bottom-marquee)'
         };
 
         for (const frame of frames) {
@@ -78,9 +78,13 @@ class WidgetFactory {
                     // Skip if already detected via API key in this frame
                     if (detectedInfo.some(d => d.frame === frame && d.type === type)) continue;
 
-                    const hasWidget = await frame.locator(selector).first().isVisible({ timeout: 1000 });
-                    if (hasWidget) {
-                        console.log(`Widget detected: ${type} in frame via selector: ${selector}`);
+                    // Increase timeout and check for presence even if not immediately visible (some widgets lazy-load styles)
+                    const locator = frame.locator(selector).first();
+                    const isVisible = await locator.isVisible({ timeout: 3000 }).catch(() => false);
+                    const exists = (await locator.count().catch(() => 0)) > 0;
+
+                    if (isVisible || exists) {
+                        console.log(`Widget detected: ${type} in frame via selector: ${selector} (Visible: ${isVisible}, Exists: ${exists})`);
                         detectedInfo.push({ type, frame });
                     }
                 }

@@ -118,9 +118,6 @@ class HorizontalScrollWidget extends BaseWidget {
             'button:has-text("Read more")',
             '.show-more'
         ];
-        // Combine into a single CSS selector for efficiency where possible
-        // Note: Playwright locators with lists are handled by iterating, but for detection we want a wide net.
-        // We'll search for *each* separately and aggregate, or just iterate common ones.
 
         let targetTrigger = null;
         let targetCard = null;
@@ -187,6 +184,110 @@ class HorizontalScrollWidget extends BaseWidget {
             this.logAudit('Read More: No visible "Read More" triggers found in the entire widget.', 'info');
         }
     }
+
+    async validateTextReadability() {
+        try {
+            await this.initContext();
+            this.logAudit('Text Readability: Intensive content check for truncation.');
+
+            const textSelectors = [
+                '.feedspace-author-name',
+                '.feedspace-author-position',
+                '.feedspace-element-author-name',
+                '.feedspace-element-author-position',
+                '.feedspace-element-author-name-text',
+                '.feedspace-element-author-position-text',
+                '.feedspace-element-feed-text',
+                '.feedspace-card-body p',
+                '.feedspace-review-body',
+                '.feedspace-element-review-body',
+                'p.text-gray-800',
+                '.feedspace-element-review-contain-box',
+                'p' // Catch-all for paragraph text
+            ].join(', ');
+
+            const cards = this.context.locator(this.cardSelector);
+            const cardCount = await cards.count();
+            console.log(`[DEBUG] HorizontalScroll audit: batch-scanning ${cardCount} card candidates.`);
+
+            // "God Mode" Batch Evaluation: Process all cards in a SINGLE browser-side call
+            const scanResults = await cards.evaluateAll((elements, selectors) => {
+                return elements.map((card, i) => {
+                    const style = window.getComputedStyle(card);
+                    const isVisible = card.offsetWidth > 0 && card.offsetHeight > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+                    if (!isVisible) return null;
+
+                    // Extract author name for this card
+                    const nameSelectors = '.feedspace-author-name, .feedspace-element-author-name, .feedspace-element-author-name-text, .feedspace-element-feed-name, .author-name, .feedspace-review-author-name, .feedspace-element-author-title';
+                    const nameEl = card.querySelector(nameSelectors);
+                    const authorName = nameEl ? nameEl.innerText.trim() : `Card ${i + 1}`;
+
+                    // Find text elements within this card
+                    const textElements = card.querySelectorAll(selectors);
+                    const cardFailures = [];
+
+                    textElements.forEach(node => {
+                        const s = window.getComputedStyle(node);
+                        if (s.display === 'none' || s.visibility === 'hidden') return;
+
+                        const isTruncated = s.textOverflow === 'ellipsis' || (s.webkitLineClamp !== 'none' && s.webkitLineClamp !== '0');
+                        const isOverflowing = node.scrollHeight > node.clientHeight || node.scrollWidth > node.clientWidth;
+
+                        if (isTruncated || isOverflowing) {
+                            cardFailures.push({
+                                author: authorName,
+                                fullText: node.innerText.trim(),
+                                className: node.className || 'text-element'
+                            });
+                        }
+                    });
+
+                    return cardFailures;
+                }).filter(f => f !== null).reduce((acc, val) => acc.concat(val), []);
+            }, textSelectors).catch(err => {
+                console.error(`[DEBUG] Batch evaluation failed: ${err.message}`);
+                return [];
+            });
+
+            const seenFailures = new Set();
+            let overflowCount = 0;
+
+            for (const res of scanResults) {
+                if (!res || !res.fullText) continue;
+
+                const textSnippet = res.fullText.substring(0, 30);
+                const className = res.className
+                    .split(' ')
+                    .filter(c => c.length > 0)
+                    .slice(0, 2)
+                    .join('.') || 'text-element';
+
+                const dedupKey = `${res.author}|${className}|${textSnippet}`;
+                if (seenFailures.has(dedupKey)) continue;
+                seenFailures.add(dedupKey);
+
+                this.detailedFailures.push({
+                    type: 'Text Readability',
+                    card: res.author,
+                    selector: className,
+                    description: `Visible text content is cut off or truncated.`,
+                    snippet: res.fullText.substring(0, 100).replace(/\n/g, ' '),
+                    severity: 'High'
+                });
+                overflowCount++;
+            }
+
+            if (overflowCount > 0) {
+                this.logAudit(`Text Readability: Detected ${overflowCount} unique instances of text cut-off across the review stack.`, 'fail');
+            } else {
+                this.logAudit('Text Readability: All visible text content is legible and well-contained.');
+            }
+        } catch (globalErr) {
+            console.error(`[FATAL] HorizontalScroll validateTextReadability failed: ${globalErr.message}`);
+            this.logAudit(`Text Readability check encountered a critical error: ${globalErr.message}`, 'fail');
+        }
+    }
+
     async validateReadMore() {
         // Redirect legacy call to the new robust implementation
         await this.validateReadMoreExpansion();

@@ -33,8 +33,13 @@ Before(async function () {
 After(async function (scenario) {
     if (this.currentWidget) {
         const widgetType = this.currentWidget.constructor.name.replace('Widget', '');
-        console.log(`[HOOK] Generating auto-report for ${widgetType} after scenario: ${scenario.pickle.name}`);
-        await this.currentWidget.generateReport(widgetType);
+
+        // Support user request for "Individual_" keyword in report name for granular runs
+        const isIndividual = scenario.pickle.tags.some(tag => tag.name.toLowerCase().includes('individual'));
+        const reportName = isIndividual ? `Individual_${widgetType}` : widgetType;
+
+        console.log(`[HOOK] Generating auto-report for ${reportName} after scenario: ${scenario.pickle.name}`);
+        await this.currentWidget.generateReport(reportName);
     }
     await page.close();
     await context.close();
