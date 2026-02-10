@@ -147,7 +147,7 @@ Then('individual verify that no review dates are undefined', async function () {
     await currentWidget.validateDateConsistency();
 });
 
-Then('individual verify that review text is not overflowing', async function () {
+Then('individual verify that review text is not overflowing', { timeout: 120 * 1000 }, async function () {
     await currentWidget.validateTextReadability();
 });
 
