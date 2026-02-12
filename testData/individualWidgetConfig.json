@@ -5,7 +5,7 @@
     "widgets": [
         {
             "type": "Carousel",
-            "url": "http://aromaarabia.com/",
+            "url": "https://www.feedspace.io/widget/ab0a6d06-b01b-4935-af76-06cc1231c540?info=1",
             "uiRules": {
                 "minReviews": 1,
                 "hasNavigation": true,
