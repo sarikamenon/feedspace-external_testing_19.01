@@ -678,35 +678,23 @@ class BaseWidget {
         this.logAudit('Card Consistency: Checks skipped (Star-only reviews are valid).');
     }
 
-    async validateReadMore() {
-        console.log('Running Read More check...');
-        const readMoreBtn = this.context.locator('.feedspace-read-more, .read-more, .show-more, .feedspace-element-read-more-text-span').first();
-        if (await readMoreBtn.count() > 0 && await readMoreBtn.isVisible()) {
-            this.logAudit('Read More Functionality: Element detected and visible.');
-            try {
-                await readMoreBtn.click({ timeout: 2000 });
-                this.logAudit('Read More Functionality: Successfully expanded and verified on first card.');
-            } catch (e) {
-                this.logAudit(`Read More Functionality: Failed to interact with button: ${e.message}`, 'info');
-            }
-        } else {
-            this.logAudit('Read More Functionality: No "Read More" expansion anchors found (content likely fits or uses different mechanism).', 'info');
-        }
-    }
 
-    async generateReport(widgetType) {
+    async generateReport(widgetType, filenameSuffix = '') {
+        const reportKey = `${this.reportType}_${filenameSuffix}`;
         this.generatedReports = this.generatedReports || new Set();
-        if (this.generatedReports.has(this.reportType)) {
-            console.log(`[WIDGET-AUDIT] Report for ${this.reportType} already generated. Skipping.`);
+
+        // Allow generating same report type if suffix is different (e.g. different URL)
+        if (this.generatedReports.has(reportKey)) {
+            console.log(`[WIDGET-AUDIT] Report for ${reportKey} already generated. Skipping.`);
             return;
         }
 
-        console.log(`[WIDGET-AUDIT] Generating ${this.reportType} report for ${widgetType}. Reviews: ${this.reviewStats.total}`);
-        this.generatedReports.add(this.reportType);
+        console.log(`[WIDGET-AUDIT] Generating ${this.reportType} report for ${widgetType} (Suffix: ${filenameSuffix}). Reviews: ${this.reviewStats.total}`);
+        this.generatedReports.add(reportKey);
         const reportDir = path.resolve('reports');
         if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir, { recursive: true });
 
-        const filename = `Report_${widgetType}_${this.reportType}.html`;
+        const filename = `Report_${widgetType}_${this.reportType}${filenameSuffix ? '_' + filenameSuffix : ''}.html`;
         const reportPath = path.join(reportDir, filename);
         const date = new Date().toLocaleString();
 

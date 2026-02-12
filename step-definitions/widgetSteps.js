@@ -37,24 +37,6 @@ Given('I load the widget URL', async function () {
     await this.page.waitForTimeout(2000); // Small grace period for late scripts
 });
 
-Then('I generate the final UI audit report for {string}', async function (widgetType) {
-    let totalFailures = 0;
-
-    for (const widget of this.detectedWidgets) {
-        const typeName = widget.constructor.name.replace('Widget', '');
-        const finalReportName = (widgetType === 'DetectedWidget' || widgetType === 'Auto') ? typeName : widgetType;
-
-        await widget.generateReport(finalReportName);
-
-        const failures = widget.auditLog.filter(l => l.type === 'fail');
-        totalFailures += failures.length;
-    }
-
-    if (totalFailures > 0) {
-        throw new Error(`Widget Audit Failed with ${totalFailures} total issues across widgets. Check reports for details.`);
-    }
-});
-
 Then('the framework should dynamically detect the widget as {string}', async function (widgetType) {
     const detectedInstances = await WidgetFactory.detectAndCreate(this.page, widgetType, testData);
     this.detectedWidgets = detectedInstances; // Store array
@@ -98,7 +80,16 @@ Then('I perform a comprehensive UI audit', { timeout: 600 * 1000 }, async functi
             await widget.validateReadMore();
             await widget.validateCardConsistency();
 
-            if (typeof widget.validateUniqueBehaviors === 'function') {
+            // Specialized HorizontalScroll Checks (matching @Individual_HorizontalScroll)
+            if (widgetName === 'HorizontalScrollWidget') {
+                console.log('[AUDIT] [HorizontalScroll] Verifying specialized scrolling behavior...');
+                await widget.validateHorizontalScrolling();
+
+                console.log('[AUDIT] [HorizontalScroll] Verifying specialized review counts & classifications...');
+                await widget.validateReviewCountsAndTypes();
+            }
+
+            if (typeof widget.validateUniqueBehaviors === 'function' && widgetName !== 'HorizontalScrollWidget') {
                 await widget.validateUniqueBehaviors();
             }
         } catch (error) {

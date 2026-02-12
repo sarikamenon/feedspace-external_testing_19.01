@@ -56,7 +56,7 @@
         },
         {
             "type": "HorizontalScroll",
-            "url": "https://www.feedspace.io/widget/4aaa2267-0098-4cc7-baad-79e572f29cb1?info=1",
+            "url": "https://www.schoolofpodcasting.com/",
             "uiRules": {
                 "minReviews": 1,
                 "hasHorizontalScroll": true
@@ -64,7 +64,7 @@
         },
         {
             "type": "FloatingCards",
-            "url": "https://www.feedspace.io/widget/e7831239-7c02-4e86-a481-ae5d313542a9?info=1/",
+            "url": "https://www.schoolofpodcasting.com/",
             "uiRules": {
                 "minReviews": 1,
                 "hasPopups": true,

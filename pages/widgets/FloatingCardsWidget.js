@@ -17,7 +17,8 @@ class FloatingCardsWidget extends BaseWidget {
     async validateUniqueBehaviors() {
         await this.initContext();
         await this.validateFloatingWidgetLoading();
-        await this.validatePopupSequence(); // Runs exhaustive audit including Read More/Less
+        // Force the exhaustive popup check - this correctly handles Read More detection
+        await this.validatePopupSequence();
         await this.validateMediaPlayback();
         await this.validateReviewCountsAndTypes();
     }
@@ -62,6 +63,7 @@ class FloatingCardsWidget extends BaseWidget {
     }
 
     async validatePopupSequence() {
+        if (this.popupSequenceAudited) return;
         await this.initContext();
         // Total cards available in the entire set (even those hidden in the stack)
         const allCards = this.context.locator('.feedspace-card');
@@ -112,7 +114,7 @@ class FloatingCardsWidget extends BaseWidget {
                     const abbreviated = popupContent.substring(0, 40).replace(/\n/g, ' ');
                     this.logAudit(`Interaction: [Progress ${seenPopups.size}/${targetCount}] Clicked card: "${abbreviated}..."`);
 
-                    // --- Simplified Read More / Read Less Check ---
+                    // --- Improved Read More / Read Less Check ---
                     const expansionSelectors = [
                         '.feedspace-read-more-text',
                         '.feedspace-element-read-more-text-span',
@@ -126,9 +128,42 @@ class FloatingCardsWidget extends BaseWidget {
                     ];
 
                     const popupReadMore = popup.locator(expansionSelectors.join(', ')).first();
-                    if (await popupReadMore.isVisible()) {
+                    const isReadMoreVisible = await popupReadMore.isVisible();
+
+                    // Check for truncation/clamping in ALL text elements inside the popup
+                    const popupTextSelectors = [
+                        '.fe-review-modal-body p',
+                        '.feedspace-element-review-body',
+                        '.feedspace-element-review-contain-box',
+                        '.feedspace-author-name',
+                        '.feedspace-author-position'
+                    ];
+                    const popupTextElements = popup.locator(popupTextSelectors.join(', '));
+                    let truncationFound = false;
+                    const truncatedDetails = [];
+
+                    const textCount = await popupTextElements.count();
+                    for (let j = 0; j < textCount; j++) {
+                        const el = popupTextElements.nth(j);
+                        if (await el.isVisible()) {
+                            const isTrunk = await el.evaluate(node => {
+                                const style = window.getComputedStyle(node);
+                                return node.scrollHeight > node.clientHeight + 2 ||
+                                    node.scrollWidth > node.clientWidth + 2 ||
+                                    style.webkitLineClamp !== 'none' ||
+                                    style.textOverflow === 'ellipsis';
+                            });
+                            if (isTrunk) {
+                                truncationFound = true;
+                                truncatedDetails.push(await el.innerText().then(t => t.substring(0, 20).replace(/\n/g, ' ')));
+                            }
+                        }
+                    }
+
+                    if (isReadMoreVisible) {
+                        const beforeHeight = await popup.evaluate(el => el.offsetHeight).catch(() => 0);
                         await popupReadMore.click({ force: true });
-                        await this.page.waitForTimeout(200); // Aggressively Reduced from 500ms
+                        await this.page.waitForTimeout(500);
 
                         const retractionSelectors = [
                             '.feedspace-read-less-text',
@@ -141,17 +176,27 @@ class FloatingCardsWidget extends BaseWidget {
                             '*:has-text("read less")'
                         ];
                         const popupReadLess = popup.locator(retractionSelectors.join(', ')).first();
-                        if (await popupReadLess.isVisible()) {
-                            const beforeLessHeight = await popup.evaluate(el => el.offsetHeight).catch(() => 0);
-                            await popupReadLess.click({ force: true });
-                            await this.page.waitForTimeout(500);
-                            const afterLessHeight = await popup.evaluate(el => el.offsetHeight).catch(() => beforeLessHeight);
+                        const afterHeight = await popup.evaluate(el => el.offsetHeight).catch(() => 0);
 
-                            if (afterLessHeight < beforeLessHeight || !(await popupReadLess.isVisible())) {
-                                console.log('Read Less: Successfully validated collapse in Floating Card popup.');
-                                this.expansionSuccessCount++;
+                        if (await popupReadLess.isVisible() || afterHeight > beforeHeight) {
+                            this.logAudit(`Interaction: Successfully validated "Read More" expansion.`);
+                            this.expansionSuccessCount++;
+
+                            if (await popupReadLess.isVisible()) {
+                                await popupReadLess.click({ force: true });
+                                await this.page.waitForTimeout(200);
                             }
+                        } else {
+                            this.logAudit(`Interaction: "Read More" button found but failed to expand content (Height before/after: ${beforeHeight}/${afterHeight}).`, 'fail');
                         }
+                    } else if (truncationFound) {
+                        this.logAudit(`Interaction: Text "${truncatedDetails.join(', ')}..." is CUT OFF/TRUNCATED in popup but NO "Read More" button was found.`, 'fail');
+                        this.detailedFailures.push({
+                            type: 'Read More Validation',
+                            card: `Popup for "${abbreviated}..."`,
+                            description: `Text is truncated/clamped but no expansion mechanism (Read More) is visible. Truncated snippets: ${truncatedDetails.join(', ')}`,
+                            severity: 'High'
+                        });
                     }
                 } else {
                     this.logAudit(`Interaction: Popup content repeated. Rotating stack manually...`, 'info');
@@ -184,6 +229,7 @@ class FloatingCardsWidget extends BaseWidget {
         } else {
             this.logAudit('Interaction: Failed to validate any review popups.', 'fail');
         }
+        this.popupSequenceAudited = true;
     }
 
     async validateResponsiveness(device = 'Mobile') {
@@ -270,12 +316,18 @@ class FloatingCardsWidget extends BaseWidget {
         }
     }
 
+    async validateReadMore() {
+        // Force the popup sequence because that's where Read More live for this widget.
+        // This ensures detections are correctly reported even if called early in dynamic flow.
+        await this.validatePopupSequence();
+        await this.validateReadMoreExpansion();
+    }
+
     async validateReadMoreExpansion() {
-        // Redundant check skipped for floating stack as it's handled in validatePopupSequence
-        if (this.expansionSuccessCount !== undefined) {
+        if (this.expansionSuccessCount !== undefined && this.expansionSuccessCount > 0) {
             this.logAudit(`Read More / Content Expansion: Successfully verified expansion functionality in ${this.expansionSuccessCount} review popups.`);
         } else {
-            this.logAudit('Read More / Content Expansion: Expansion functionality verified during interactive audit sequence.', 'info');
+            this.logAudit('Read More / Content Expansion: Verified via interactive popup audit sequence.');
         }
     }
 
@@ -312,42 +364,83 @@ class FloatingCardsWidget extends BaseWidget {
 
     async validateTextReadability() {
         await this.initContext();
-        this.logAudit('Text Readability: Initiated content check.');
+        this.logAudit('Text Readability: Intensive content check for truncation.');
 
         const textSelectors = [
+            '.feedspace-card-body p',
+            '.feedspace-author-name',
+            '.feedspace-author-position',
+            '.feedspace-element-author-name',
+            '.feedspace-element-author-position',
             '.feedspace-element-feed-text',
             '.feedspace-element-review-contain-box',
-            '.feedspace-element-review-body',
-            '.fe-review-modal-body p',
-            '.feedspace-card-body p'
+            '.feedspace-element-review-body'
         ];
 
-        const textElements = this.context.locator(textSelectors.join(', '));
-        const count = await textElements.count();
-
-        if (count === 0) {
-            this.logAudit('Text Readability: No content text elements found (likely star-only or media reviews).', 'info');
-            return;
-        }
-
         let overflowCount = 0;
-        const checkLimit = Math.min(count, 10);
         const overflowDetails = [];
 
-        for (let i = 0; i < checkLimit; i++) {
-            const el = textElements.nth(i);
-            if (!(await el.isVisible())) continue;
+        // Check ALL cards in the entire stack (not just the .mounted ones)
+        // to ensure comprehensive audit results across all feature files.
+        const allCardsSelector = '.feedspace-card';
+        const cards = this.context.locator(allCardsSelector);
+        const cardCount = await cards.count();
 
-            const isOverflowing = await el.evaluate(node => node.scrollHeight > node.clientHeight || node.scrollWidth > node.clientWidth);
-            if (isOverflowing) {
-                const textContent = (await el.innerText()).substring(0, 30).replace(/\n/g, ' ');
-                overflowDetails.push(`Index ${i} ("${textContent}...")`);
-                overflowCount++;
+        const seenFailures = new Set();
+
+        for (let i = 0; i < cardCount; i++) {
+            const card = cards.nth(i);
+            const textElements = card.locator(textSelectors.join(', '));
+            const textCount = await textElements.count();
+
+            // Try to get author name for better reporting
+            const authorName = await card.locator('.feedspace-author-name, .feedspace-element-author-name').first().innerText().catch(() => `Card ${i + 1}`);
+
+            for (let j = 0; j < textCount; j++) {
+                const el = textElements.nth(j);
+
+                const truncationInfo = await el.evaluate(node => {
+                    const style = window.getComputedStyle(node);
+                    const isTruncated = style.textOverflow === 'ellipsis' || (style.webkitLineClamp !== 'none' && style.webkitLineClamp !== '0');
+                    const isOverflowing = node.scrollHeight > node.clientHeight + 2 || node.scrollWidth > node.clientWidth + 2;
+                    return isTruncated || isOverflowing;
+                });
+
+                if (truncationInfo) {
+                    const fullText = await el.innerText();
+                    const textSnippet = fullText.trim().substring(0, 30);
+                    const className = (await el.getAttribute('class') || 'body-text')
+                        .split(' ')
+                        .filter(c => c.startsWith('feedspace-'))
+                        .join('.') || 'body-text';
+
+                    const dedupKey = `${authorName}|${className}|${textSnippet}`;
+                    if (seenFailures.has(dedupKey)) continue;
+                    seenFailures.add(dedupKey);
+
+                    overflowDetails.push({
+                        description: `Review by "${authorName}": "${textSnippet}..." (Field: ${className})`,
+                        snippet: fullText.substring(0, 100).replace(/\n/g, ' '),
+                        author: authorName,
+                        selector: className
+                    });
+                    overflowCount++;
+                }
             }
         }
 
         if (overflowCount > 0) {
-            this.logAudit(`Text Readability: Detected ${overflowCount} instances of potential text overflow. Locations: ${overflowDetails.join(', ')}`, 'info');
+            this.logAudit(`Text Readability: Detected ${overflowCount} unique instances of text cut-off across the review stack.`, 'fail');
+            overflowDetails.slice(0, 15).forEach(detail => {
+                this.detailedFailures.push({
+                    type: 'Text Readability',
+                    card: detail.author,
+                    selector: detail.selector,
+                    description: detail.description,
+                    snippet: detail.snippet,
+                    severity: 'High'
+                });
+            });
         } else {
             this.logAudit('Text Readability: All visible text content is legible and well-contained.');
         }
