@@ -350,19 +350,34 @@ class BaseWidget {
         // Performance Optimization: Batch process all text elements
         const textData = await textElements.evaluateAll(elements => {
             return elements.map((el, i) => {
-                const isOverflowing = el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth;
+                // Add 2px tolerance to avoid sub-pixel false positives
+                let isOverflowing = el.scrollHeight > el.clientHeight + 2 || el.scrollWidth > el.clientWidth + 2;
+
+                // IGNORE Overflow if a "Read More" button exists in the same card (Intentional Truncation)
+                const card = el.closest('.feedspace-review-item, .feedspace-element-feed-box, .feedspace-element-post-box, .feedspace-element-marquee-item, .swiper-slide');
+                const hasReadMore = !!card?.querySelector('.feedspace-read-more, .read-more, .show-more, .feedspace-element-read-more-text-span, .feedspace-read-more-text');
+
+                if (hasReadMore) {
+                    isOverflowing = false;
+                }
+
                 const style = window.getComputedStyle(el);
                 const fontSize = parseFloat(style.fontSize);
                 const color = style.color;
 
                 if (el.clientHeight === 0) return null; // Not visible
 
+                const cardId = el.closest('[data-feed-id]')?.getAttribute('data-feed-id') || 'Unknown';
+                const textSnippet = el.innerText.substring(0, 50).replace(/\n/g, ' ') + '...';
+
                 return {
                     index: i + 1,
+                    cardId,
+                    textSnippet,
                     isOverflowing,
                     fontSize,
                     color,
-                    html: el.outerHTML.substring(0, 50)
+                    html: el.outerHTML.substring(0, 100)
                 };
             }).filter(d => d !== null);
         });
@@ -373,8 +388,8 @@ class BaseWidget {
                 overflowCount++;
                 this.detailedFailures.push({
                     type: 'Text Readability',
-                    card: `Element #${data.index}`,
-                    description: 'Text is overflowing its container.',
+                    card: `ID: ${data.cardId} (Index #${data.index})`,
+                    description: `Text is cut off or overflowing. Content starts with: "${data.textSnippet}"`,
                     location: 'CSS Overflow',
                     snippet: data.html,
                     severity: 'Medium'
@@ -383,7 +398,7 @@ class BaseWidget {
         }
 
         if (overflowCount > 0) {
-            this.logAudit(`Text Readability: Found ${overflowCount} instances of overflowing text.`, 'fail');
+            this.logAudit(`Text Readability: Found ${overflowCount} instances of cut-off text.`, 'fail');
         } else {
             this.logAudit('Text Readability: All text is legible and contained.');
         }
@@ -850,6 +865,8 @@ class BaseWidget {
             ['Media Integrity', 'Media Integrity'],
             ['Date Consistency', 'Date Consistency'],
             ['Interactive Behavior', 'Interaction'],
+            ['Navigation (Arrows/Dots)', 'Navigation'],
+            ['Media Playback', 'Media Playback'],
             ['Read More / Less Cycle', 'Read More'],
             ['Responsiveness', 'Responsiveness']
         ];
