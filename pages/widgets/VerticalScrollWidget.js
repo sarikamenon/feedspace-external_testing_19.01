@@ -167,7 +167,7 @@ class VerticalScrollWidget extends BaseWidget {
                 });
 
                 if (hasVerticalScroll) {
-                    this.logAudit('Vertical Scrolling Mode: DETECTED (Standard vertical scrolling)');
+                    this.logAudit('[Navigation] Vertical Scrolling Mode: DETECTED (Standard vertical scrolling)');
                     console.log('Validating standard vertical scroll behavior...');
 
                     // Check if CSS animation is active
@@ -177,15 +177,15 @@ class VerticalScrollWidget extends BaseWidget {
                     });
 
                     if (hasAnimation) {
-                        this.logAudit('Vertical Scrolling: CSS animation detected on scrollable elements.');
+                        this.logAudit('[Navigation] Vertical Scrolling: CSS animation detected on scrollable elements.');
                     } else {
-                        this.logAudit('Vertical Scrolling: No CSS animation detected, but structure supports vertical scrolling.', 'info');
+                        this.logAudit('[Navigation] Vertical Scrolling: No CSS animation detected, but structure supports vertical scrolling.', 'info');
                     }
                 } else {
-                    this.logAudit('Vertical Scrolling Mode: N/A (Not enabled for this widget)', 'info');
+                    this.logAudit('[Navigation] Vertical Scrolling Mode: N/A (Not enabled for this widget)', 'info');
                 }
             } else {
-                this.logAudit('Vertical Scrolling: No scrollable columns detected.', 'info');
+                this.logAudit('[Navigation] Vertical Scrolling: No scrollable columns detected.', 'info');
             }
         } catch (e) {
             this.logAudit(`Vertical Scrolling: Error during validation - ${e.message}`, 'info');
@@ -263,7 +263,7 @@ class VerticalScrollWidget extends BaseWidget {
             // Test scroll interaction
             const scrollContainer = this.context.locator('.feedspace-element-marquee-row, .feedspace-element-feed-box-wrap').first();
             if (await scrollContainer.count() > 0) {
-                this.logAudit('Interaction: Vertical scroll animation is active and user can view scrolling content.');
+                this.logAudit('[Interactive] Vertical scroll animation is active and user can view scrolling content.');
             }
 
         } catch (e) {
@@ -429,7 +429,7 @@ class VerticalScrollWidget extends BaseWidget {
 
                         if (collapseSuccess) {
                             console.log(`Card ${cardId}: Toggle Cycle (2/2) COMPLETE.`);
-                            this.logAudit(`Read Less: Successfully validated collapse for card ${cardId}.`);
+                            this.logAudit(`[Read More] Read Less: Successfully validated collapse for card ${cardId}.`);
                             successfulExpansions++;
                         } else {
                             failedCards.push(`Card ${cardId}: Toggle cycle failed to return content to initial state`);
@@ -444,12 +444,12 @@ class VerticalScrollWidget extends BaseWidget {
 
             if (expandableCount > 0) {
                 if (successfulExpansions > 0) {
-                    this.logAudit(`Read More / Less Cycle: Successfully verified ${successfulExpansions} full expansion and collapse cycles.`);
+                    this.logAudit(`[Read More] Read More / Less Cycle: Successfully verified ${successfulExpansions} full expansion and collapse cycles.`);
                 } else {
-                    this.logAudit(`Read More/Read Less: Interaction failed on all ${expandableCount} tested cards.`, 'fail');
+                    this.logAudit(`[Read More] Read More/Read Less: Interaction failed on all ${expandableCount} tested cards.`, 'fail');
                 }
             } else {
-                this.logAudit('Read More/Read Less: No expandable source cards found in sample.', 'info');
+                this.logAudit('[Read More] Read More/Read Less: No expandable source cards found in sample.', 'info');
             }
         } catch (e) {
             this.logAudit(`Read More/Read Less: Validation error - ${e.message}`, 'info');
@@ -460,6 +460,129 @@ class VerticalScrollWidget extends BaseWidget {
         console.log('Overriding generic Read More check with specialized expansion logic...');
         // Delegate to the specialized logic that we already verified
         await this.validateReadMoreExpansion();
+    }
+
+    async validateTextReadability() {
+        this.logAudit('Behavior: Detailed Text Readability check for Vertical Scroll.');
+        await this.initContext();
+
+        const cards = this.context.locator(this.cardSelector);
+        const cardCount = await cards.count();
+
+        if (cardCount === 0) {
+            this.logAudit('Text Readability: No review cards found.', 'info');
+            return;
+        }
+
+        const readabilityIssues = await cards.evaluateAll((elements) => {
+            const issues = [];
+
+            elements.forEach((card, index) => {
+                const isClone = card.closest('[data-fs-marquee-clone="true"], .cloned, .clone') ||
+                    card.getAttribute('aria-hidden') === 'true';
+                if (isClone) return;
+
+                const cardId = card.getAttribute('data-feed-id') || card.id || `Card-${index + 1}`;
+
+                // Exhaustive Children Overlap & Style Check
+                const children = card.querySelectorAll('p, div, span, h4');
+                const visibleChildren = Array.from(children).filter(el => {
+                    const style = window.getComputedStyle(el);
+                    return el.offsetHeight > 0 && style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity) > 0.1;
+                });
+
+                for (let i = 0; i < visibleChildren.length; i++) {
+                    const el = visibleChildren[i];
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+
+                    // Skip containers with no direct text
+                    const hasText = Array.from(el.childNodes).some(node => node.nodeType === 3 && node.textContent.trim().length > 0);
+                    if (!hasText && el.tagName === 'DIV') continue;
+
+                    // Style Checks
+                    const hasBlur = style.filter.includes('blur') || style.backdropFilter.includes('blur');
+                    const hasMask = style.maskImage !== 'none' || style.webkitMaskImage !== 'none' || style.clipPath !== 'none';
+                    const hasGradient = style.backgroundImage.includes('linear-gradient') || style.maskImage.includes('linear-gradient');
+
+                    if (hasBlur || hasMask || hasGradient) {
+                        // Ignore if it's the specific linear-gradient shadow button effect
+                        if (el.classList.contains('feedspace-read-more-btn') || el.classList.contains('feedspace-element-read-more')) continue;
+
+                        issues.push({
+                            cardId,
+                            textSnippet: el.innerText.substring(0, 50).replace(/\n/g, ' '),
+                            reason: 'Faded Truncation',
+                            html: el.outerHTML.substring(0, 150)
+                        });
+                    }
+
+                    // Overlap Check against all other visible children
+                    for (let j = i + 1; j < visibleChildren.length; j++) {
+                        const otherEl = visibleChildren[j];
+                        // Don't compare parent/child
+                        if (el.contains(otherEl) || otherEl.contains(el)) continue;
+
+                        const otherRect = otherEl.getBoundingClientRect();
+                        const overlapX = Math.max(0, Math.min(rect.right, otherRect.right) - Math.max(rect.left, otherRect.left));
+                        const overlapY = Math.max(0, Math.min(rect.bottom, otherRect.bottom) - Math.max(rect.top, otherRect.top));
+
+                        if (overlapX > 5 && overlapY > 5) {
+                            issues.push({
+                                cardId,
+                                textSnippet: `${el.innerText.substring(0, 20)} overlaps ${otherEl.innerText.substring(0, 20)}`,
+                                reason: 'Overlapping Text',
+                                html: el.outerHTML.substring(0, 100)
+                            });
+                        }
+                    }
+                }
+            });
+            return issues;
+        });
+
+        // Consolidate issues: Group by unique Card ID
+        const cardIssues = new Map();
+        for (const issue of readabilityIssues) {
+            if (!cardIssues.has(issue.cardId)) {
+                cardIssues.set(issue.cardId, {
+                    cardId: issue.cardId,
+                    reasons: new Set([issue.reason]),
+                    snippet: issue.textSnippet,
+                    html: issue.html
+                });
+            } else {
+                cardIssues.get(issue.cardId).reasons.add(issue.reason);
+            }
+        }
+
+        let failCount = 0;
+        for (const [cardId, data] of cardIssues) {
+            failCount++;
+            const reasons = Array.from(data.reasons).join(', ');
+            const cardStr = `Card ID: ${cardId}`;
+            const desc = `UI Issue: ${reasons} detected. Snippet: "${data.snippet}"`;
+
+            // Prevent duplicate entries if already added by other checks or re-runs
+            const isDuplicate = this.detailedFailures.some(f => f.card === cardStr && f.description === desc);
+            if (!isDuplicate) {
+                this.detailedFailures.push({
+                    type: 'Text Readability',
+                    card: cardStr,
+                    description: desc,
+                    location: 'Visual Integrity',
+                    snippet: data.html,
+                    severity: 'High',
+                    selector: '.feedspace-element-review-contain-box'
+                });
+            }
+        }
+
+        if (failCount > 0) {
+            this.logAudit(`Text Readability: Found issues in ${failCount} unique review cards.`, 'fail');
+        } else {
+            this.logAudit('Text Readability: All text is legible and contained.');
+        }
     }
 
     async validateReviewCountsAndTypes() {
@@ -556,12 +679,12 @@ class VerticalScrollWidget extends BaseWidget {
                 });
 
                 if (isPlayable) {
-                    this.logAudit('Media Playback: Video elements are loaded and playable.');
+                    this.logAudit('[Playback] Media Playback: Video elements are loaded and playable.');
                 } else {
-                    this.logAudit('Media Playback: Video elements found but may not be ready to play.', 'info');
+                    this.logAudit('[Playback] Media Playback: Video elements found but may not be ready to play.', 'info');
                 }
             } catch (e) {
-                this.logAudit(`Media Playback: Video playback test failed - ${e.message}`, 'info');
+                this.logAudit(`[Playback] Media Playback: Video playback test failed - ${e.message}`, 'info');
             }
         }
 

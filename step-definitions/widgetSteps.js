@@ -64,43 +64,8 @@ Then('I perform a comprehensive UI audit', { timeout: 600 * 1000 }, async functi
     console.log('DEBUG: Starting consolidated UI audit for ALL detected widgets...');
 
     for (const widget of this.detectedWidgets) {
-        const widgetName = widget.constructor.name;
-        console.log(`\n[AUDIT] Starting audit for: ${widgetName}`);
-        try {
-
-            await widget.validateVisibility();
-            await widget.validateBranding();
-            await widget.validateCTA();
-            await widget.validateDateConsistency();
-            await widget.validateLayoutIntegrity();
-            await widget.validateAlignment();
-            await widget.validateTextReadability();
-            await widget.runAccessibilityAudit();
-            await widget.validateMediaIntegrity();
-            await widget.validateReadMore();
-            await widget.validateCardConsistency();
-
-            // Specialized HorizontalScroll Checks (matching @Individual_HorizontalScroll)
-            if (widgetName === 'HorizontalScrollWidget') {
-                console.log('[AUDIT] [HorizontalScroll] Verifying specialized scrolling behavior...');
-                await widget.validateHorizontalScrolling();
-
-                console.log('[AUDIT] [HorizontalScroll] Verifying specialized review counts & classifications...');
-                await widget.validateReviewCountsAndTypes();
-            }
-
-            if (typeof widget.validateUniqueBehaviors === 'function' && widgetName !== 'HorizontalScrollWidget') {
-                await widget.validateUniqueBehaviors();
-            }
-        } catch (error) {
-            console.error(`[AUDIT] Critical error during audit for ${widgetName}: ${error.message}`);
-            widget.logAudit(`Critical Audit Failure: ${error.message}`, 'fail');
-        }
-
-        const failures = widget.auditLog.filter(l => l.type === 'fail');
-        if (failures.length > 0) {
-            console.log(`[AUDIT] Found ${failures.length} failures for ${widgetName}, continuing...`);
-        }
+        // This single call now handles all base audits and specialized unique behaviors
+        await widget.performComprehensiveAudit();
     }
 });
 
@@ -177,6 +142,7 @@ Then('I generate the final UI audit report for {string}', async function (widget
         const typeName = widget.constructor.name.replace('Widget', '');
         const finalReportName = (widgetType === 'DetectedWidget' || widgetType === 'Auto') ? typeName : widgetType;
 
+        widget.finalizeAuditCoverage();
         await widget.generateReport(finalReportName);
 
         const failures = widget.auditLog.filter(l => l.type === 'fail');
