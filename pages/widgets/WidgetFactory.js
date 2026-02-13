@@ -32,10 +32,6 @@ class WidgetFactory {
         await page.waitForTimeout(5000); // 5s wait for stability
 
         const frames = page.frames();
-        const detectedInfo = []; // Array of { type, frame }
-
-        console.log(`Scanning ${frames.length} frames for widgets...`);
-
         const detectors = {
             floatingcards: '.feedspace-floating-widget.show-left-bottom.close-active, .feedspace-floating-widget',
             carousel: '.feedspace-carousel-widget, .feedspace-element-container.feedspace-carousel-widget',
@@ -47,7 +43,26 @@ class WidgetFactory {
             masonry: '.feedspace-element-container:not(.feedspace-carousel-widget):not(.feedspace-element-horizontal-scroll-widget):not(.feedspace-element-feed-top-bottom-marquee)'
         };
 
-        for (const frame of frames) {
+        const detectedInfo = []; // Array of { type, frame }
+
+        // 1. Check Main Frame FIRST (Priority)
+        console.log('Scanning Main Frame for widgets...');
+        const mainFrame = page.mainFrame();
+        for (const [type, selector] of Object.entries(detectors)) {
+            try {
+                const locator = mainFrame.locator(selector).first();
+                if (await locator.count() > 0 && await locator.isVisible().catch(() => false)) {
+                    console.log(`[Main Frame] Widget detected: ${type}`);
+                    detectedInfo.push({ type, frame: mainFrame });
+                }
+            } catch (e) { /* ignore */ }
+        }
+
+        // 2. Check Child Frames if nothing found or to find others
+        const childFrames = page.frames().filter(f => f !== mainFrame);
+        console.log(`Scanning ${childFrames.length} child frames for widgets...`);
+
+        for (const frame of childFrames) {
             try {
                 const frameUrl = frame.url();
                 console.log(`Checking frame: ${frameUrl.substring(0, 100)}${frameUrl.length > 100 ? '...' : ''}`);
@@ -132,11 +147,18 @@ class WidgetFactory {
             case 'floatingcards': instance = new FloatingCardsWidget(page, config); break;
             default: instance = new BaseWidget(page, config);
         }
+
         if (frame) {
             instance.context = frame;
+            instance.isContextFixed = true;
             instance.logAudit(`Widget detected via mapping in iframe: ${frame.url()}`);
-            console.log(`Assigned detected frame to ${instance.constructor.name}`);
+        } else {
+            // Main frame detected
+            instance.context = page;
+            instance.isContextFixed = true;
+            // instance.logAudit(`Widget detected on main page.`);
         }
+
         return instance;
     }
 }

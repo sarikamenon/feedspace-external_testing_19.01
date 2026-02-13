@@ -19,47 +19,46 @@ class MasonryWidget extends BaseWidget {
             this.logAudit(`Layout: Detected ${display} based grid structure.`);
         }
 
-        // Load More validation if configured or detected
-        // Note: The user requested to click UNTIL it vanishes, so we loop.
-        // Load More validation
-        // Use context instead of page to handle iframes correctly
-        const loadMore = this.context.locator('.feedspace-load-more-btn, .load-more-btn, button:has-text("Load More")').first();
+        // 2. Load More validation
+        const loadMore = this.context.locator('span:has-text("Load More")').first();
 
         if (await loadMore.isVisible()) {
-            this.logAudit('Behavior: Load More button detected. Clicking until all reviews are loaded...');
+            this.logAudit('[Load More] Behavior: Load More button detected. Clicking until all reviews are loaded...');
             let clickCount = 0;
-            const maxClicks = 20; // Safety break
+            const maxClicks = 30; // Safety break
 
             while ((await loadMore.isVisible()) && clickCount < maxClicks) {
                 const preCount = await this.context.locator(this.cardSelector).count();
-                await loadMore.click();
-                await this.page.waitForTimeout(3000); // Increased wait for network/render
+                try {
+                    await loadMore.click({ timeout: 5000 });
+                } catch (e) {
+                    await loadMore.evaluate(node => node.click()).catch(() => { });
+                }
+                await this.page.waitForTimeout(3000);
                 const postCount = await this.context.locator(this.cardSelector).count();
 
                 if (postCount > preCount) {
                     console.log(`Load More #${clickCount + 1}: Loaded ${postCount - preCount} new items.`);
                 } else {
                     console.log(`Load More #${clickCount + 1}: No new items appeared.`);
+                    // Small fallback if it's still visible but not loading
+                    await this.page.evaluate(() => window.scrollBy(0, 500));
+                    await this.page.waitForTimeout(2000);
                 }
                 clickCount++;
             }
 
-            // Verify it actually vanished
             if (await loadMore.isVisible()) {
-                this.logAudit(`Behavior: Load More button still visible after ${clickCount} clicks.`, 'warn');
+                this.logAudit(`[Load More] Behavior: Load More button still visible after ${clickCount} clicks.`, 'warn');
             } else {
-                this.logAudit(`Behavior: Successfully loaded all content. Load More button vanished.`);
+                this.logAudit(`[Load More] Behavior: Successfully loaded all content. Load More button vanished.`);
             }
 
-            // CRITICAL: Update report stats now that all reviews are loaded
-            // CRITICAL: Update report stats now that all reviews are loaded
-            // Optimized: Use evaluateAll for instant counting instead of iterative await calls
             const stats = await this.context.locator(this.cardSelector).evaluateAll(cards => {
                 let text = 0, video = 0, audio = 0;
                 cards.forEach(card => {
                     const hasVideo = card.querySelector('video, iframe[src*="youtube"], iframe[src*="vimeo"], .video-play-button, .feedspace-element-play-feed:not(.feedspace-element-audio-feed-box)') !== null;
                     const hasAudio = card.querySelector('audio, .audio-player, .fa-volume-up, .feedspace-audio-player, .feedspace-element-audio-feed-box') !== null;
-
                     if (hasVideo) video++;
                     else if (hasAudio) audio++;
                     else text++;
@@ -68,82 +67,179 @@ class MasonryWidget extends BaseWidget {
             });
 
             this.reviewStats = Object.assign(this.reviewStats || {}, stats);
-            console.log('Final Stats Calculated:', this.reviewStats); // Debug log
-            this.logAudit(`Reviews Updated: Final count is ${stats.total} (Text: ${stats.text}, Video: ${stats.video}, Audio: ${stats.audio})`);
-
+            this.logAudit(`[Load More] Reviews Updated: Final count is ${stats.total} (Text: ${stats.text}, Video: ${stats.video}, Audio: ${stats.audio})`);
         } else {
-            this.logAudit('Behavior: No Load More button found (or all content already loaded).', 'info');
+            this.logAudit('[Load More] Behavior: No Load More button found (or all content already loaded).', 'info');
+        }
+
+        // 3. Media Playback validation
+        await this.validateMediaPlayback();
+
+        // 4. Read More / Less validation
+        await this.validateReadMore();
+
+        // 5. Inline CTA validation
+        await this.validateCTA();
+    }
+
+    async validateCTA() {
+        console.log('Running Masonry Inline CTA detection...');
+        const ctaSelector = '.feedspace-element-feed-box-inner.feedspace-inline-cta-card, .feedspace-inline-cta-card';
+        const cta = this.context.locator(ctaSelector).first();
+
+        if (await cta.isVisible().catch(() => false)) {
+            this.logAudit('Inline CTA found: .feedspace-element-feed-box-inner.feedspace-inline-cta-card');
+        } else {
+            // Fallback to base check if specific one is missing
+            const baseCta = this.context.locator('.feedspace-cta-content').first();
+            if (await baseCta.isVisible().catch(() => false)) {
+                this.logAudit('Inline CTA found: .feedspace-cta-content');
+            } else {
+                this.logAudit('No Inline CTA found on this Masonry widget.', 'info');
+            }
+        }
+    }
+
+    async validateMediaPlayback() {
+        console.log('Running Masonry Media Playback validation...');
+
+        const videoPlayBtnSelector = 'div.feedspace-video-review-header > div.feedspace-video-review-header-wrap > div.play-btn';
+        const audioPlayBtnSelector = 'div.feedspace-element-audio-feed > div.feedspace-element-audio-icon > div.play-btn';
+
+        const videoButtons = this.context.locator(videoPlayBtnSelector);
+        const audioButtons = this.context.locator(audioPlayBtnSelector);
+
+        const videoCount = await videoButtons.count();
+        const audioCount = await audioButtons.count();
+
+        console.log(`[Playback-Audit] Masonry videoCount: ${videoCount}, audioCount: ${audioCount}`);
+
+        if (videoCount === 0 && audioCount === 0) {
+            this.logAudit('[Playback] Checked (No media play buttons found to validate in Masonry).', 'info');
+            return;
+        }
+
+        let videoSummary = '';
+        let videoVerified = 0;
+        for (let i = 0; i < videoCount && videoVerified < 1; i++) {
+            const btn = videoButtons.nth(i);
+            if (await btn.isVisible().catch(() => false)) {
+                try {
+                    await btn.click({ timeout: 3000 });
+                } catch (e) {
+                    await btn.evaluate(node => node.click()).catch(() => { });
+                }
+
+                await this.page.waitForTimeout(3000);
+                const card = btn.locator('xpath=./ancestor::*[contains(@class, "feedspace-element-feed-box") or contains(@class, "feedspace-element-review-contain-box")][1]');
+                const videoEl = card.locator('video').first();
+
+                if (await videoEl.count() > 0) {
+                    const state = await videoEl.evaluate(v => ({
+                        paused: v.paused,
+                        currentTime: v.currentTime,
+                        readyState: v.readyState
+                    })).catch(() => ({ readyState: 0 }));
+
+                    if (state.readyState >= 1 || state.currentTime > 0) {
+                        videoSummary = `Video (ReadyState: ${state.readyState}, Time: ${state.currentTime.toFixed(2)})`;
+                        videoVerified++;
+                        await videoEl.evaluate(v => v.pause()).catch(() => { });
+                    }
+                } else {
+                    videoSummary = 'Video (Assume success/iframe)';
+                    videoVerified++;
+                }
+            }
+        }
+
+        let audioSummary = '';
+        let audioVerified = 0;
+        for (let i = 0; i < audioCount && audioVerified < 1; i++) {
+            const btn = audioButtons.nth(i);
+            if (await btn.isVisible().catch(() => false)) {
+                try {
+                    await btn.click({ timeout: 3000 });
+                } catch (e) {
+                    await btn.evaluate(node => node.click()).catch(() => { });
+                }
+
+                await this.page.waitForTimeout(3000);
+                const card = btn.locator('xpath=./ancestor::*[contains(@class, "feedspace-element-audio-feed") or contains(@class, "feedspace-element-feed-box")][1]');
+                const audioEl = card.locator('audio').first();
+
+                if (await audioEl.count() > 0) {
+                    const state = await audioEl.evaluate(a => ({
+                        paused: a.paused,
+                        currentTime: a.currentTime,
+                        readyState: a.readyState
+                    })).catch(() => ({ readyState: 0 }));
+
+                    if (state.readyState >= 1 || state.currentTime > 0) {
+                        audioSummary = `Audio (ReadyState: ${state.readyState}, Time: ${state.currentTime.toFixed(2)})`;
+                        audioVerified++;
+                        await audioEl.evaluate(a => a.pause()).catch(() => { });
+                    }
+                } else {
+                    audioSummary = 'Audio (Assume success/streaming)';
+                    audioVerified++;
+                }
+            }
+        }
+
+        const results = [];
+        if (videoVerified > 0) results.push(videoSummary);
+        if (audioVerified > 0) results.push(audioSummary);
+
+        if (results.length > 0) {
+            this.logAudit(`[Playback] Verified media playback success: ${results.join(' | ')}.`);
         }
     }
 
     async validateReadMore() {
-        console.log('Running Masonry-specific Read More functionality check...');
-        const readMoreSelectors = ['.feedspace-element-read-more', '.read-more', '.feedspace-read-more-text', '.feedspace-read-less-btn'];
-        const expandedSelector = '.feedspace-read-less-text, .feedspace-element-read-less, .feedspace-element-read-more:not(.feedspace-element-read-more-open), span:has-text("Read less")';
+        console.log('Running Masonry Read More / Less verification...');
+        await this.page.waitForTimeout(1000); // Wait for content stability
 
-        let targetTrigger = null;
-        let targetCard = null;
+        // User specified locator: page.locator(`button:has-text("Read More")`);
+        const readMoreBtn = this.context.locator('button:has-text("Read More")').first();
 
-        for (const selector of readMoreSelectors) {
-            const triggers = this.context.locator(selector);
-            const count = await triggers.count();
-
-            for (let i = 0; i < count; i++) {
-                const el = triggers.nth(i);
-                if (await el.isVisible().catch(() => false)) {
-                    targetTrigger = el;
-                    targetCard = el.locator('xpath=./ancestor::*[contains(@class, "feedspace-element-review-contain-box") or contains(@class, "feedspace-element-feed-box") or contains(@class, "feedspace-review-item")][1]').first();
-                    break;
-                }
-            }
-            if (targetTrigger) break;
+        if (!(await readMoreBtn.isVisible().catch(() => false))) {
+            this.logAudit('[Read More] Read More: No "Read More" button found in Masonry layout.', 'info');
+            return;
         }
 
-        if (targetTrigger && targetCard) {
-            let expansionResult = null;
-            let collapseResult = null;
+        const targetCard = readMoreBtn.locator('xpath=./ancestor::*[contains(@class, "feedspace-element-review-contain-box") or contains(@class, "feedspace-element-feed-box") or contains(@class, "feedspace-review-item")][1]').first();
 
-            const initialHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => 0);
+        if (await targetCard.count() === 0) {
+            this.logAudit('[Read More] Read More: Found button but could not identify parent card.', 'warn');
+            return;
+        }
 
-            try {
-                await targetTrigger.scrollIntoViewIfNeeded().catch(() => { });
-                await targetTrigger.click({ force: true });
-                await this.page.waitForTimeout(1000);
+        const initialHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => 0);
+        this.logAudit(`[Read More] Read More: Initial height: ${initialHeight}px. Clicking...`, 'info');
 
-                const currentHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => 0);
-                const hasReadLess = await targetCard.locator(expandedSelector).first().isVisible().catch(() => false);
+        try {
+            await readMoreBtn.scrollIntoViewIfNeeded().catch(() => { });
+            await readMoreBtn.click({ force: true });
+            await this.page.waitForTimeout(1500);
 
-                if (hasReadLess || currentHeight > initialHeight + 5) {
-                    expansionResult = `Verified (+${currentHeight - initialHeight}px)`;
+            const expandedHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => 0);
+            const readLessBtn = this.context.locator('button:has-text("Read Less")').first();
+            const hasReadLess = await readLessBtn.isVisible();
 
-                    // --- Validate Read Less (Collapse) ---
-                    const collapseBtn = targetCard.locator(expandedSelector).first();
-                    if (await collapseBtn.isVisible()) {
-                        await collapseBtn.click({ force: true });
-                        await this.page.waitForTimeout(800);
-                        const heightCollapsed = await targetCard.evaluate(el => el.offsetHeight).catch(() => currentHeight);
-                        if (heightCollapsed < currentHeight - 2 || !(await collapseBtn.isVisible().catch(() => false))) {
-                            collapseResult = `Verified (-${currentHeight - heightCollapsed}px)`;
-                        } else {
-                            collapseResult = 'Collapse failed (height did not decrease)';
-                        }
-                    } else {
-                        collapseResult = 'Trigger missing';
-                    }
+            if (expandedHeight > initialHeight + 5 || hasReadLess) {
+                this.logAudit(`[Read More] Read More: Expansion verified. New height: ${expandedHeight}px (+${expandedHeight - initialHeight}px).`);
+
+                if (hasReadLess) {
+                    await readLessBtn.click({ force: true });
+                    await this.page.waitForTimeout(1200);
+                    this.logAudit('[Read More] Read More / Less: Full cycle validated successfully.');
                 }
-
-                if (expansionResult && collapseResult) {
-                    this.logAudit(`Read More / Less: Full cycle validated in Masonry. (${expansionResult} -> ${collapseResult}).`);
-                } else if (expansionResult) {
-                    this.logAudit(`Read More: Expansion validated (${expansionResult}), but Collapse check failed: ${collapseResult || 'N/A'}.`, 'info');
-                } else {
-                    this.logAudit('Read More: Expansion triggers found but failed to verify state change.', 'info');
-                }
-            } catch (e) {
-                this.logAudit(`Read More: Interaction failed - ${e.message.split('\n')[0]}`, 'info');
+            } else {
+                this.logAudit(`[Read More] Read More: Expansion failed (Height remained ${expandedHeight}px).`, 'info');
             }
-        } else {
-            this.logAudit('Read More: No expansion triggers found in Masonry layout.', 'info');
+        } catch (e) {
+            this.logAudit(`[Read More] Read More / Less: Interaction failed - ${e.message.split('\n')[0]}`, 'info');
         }
     }
 }

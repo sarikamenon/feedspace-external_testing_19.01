@@ -134,9 +134,8 @@ Then('the individual widget follows layout and branding guidelines', async funct
 });
 
 Then('I verify individual widget-specific behaviors for {string}', { timeout: 300 * 1000 }, async function (widgetType) {
-    if (typeof currentWidget.validateUniqueBehaviors === 'function') {
-        await currentWidget.validateUniqueBehaviors();
-    }
+    // This now performs a MASTER audit including all base and unique checks
+    await currentWidget.performComprehensiveAudit();
 });
 
 Then('individual user validates card consistency and content', async function () {
@@ -176,6 +175,7 @@ Then('individual verify widget responsiveness on mobile', async function () {
 });
 
 Then('I generate the individual final UI audit report for {string}', async function (widgetType) {
+    currentWidget.finalizeAuditCoverage();
     let finalReportName = (widgetType === 'DetectedWidget' || widgetType === 'Auto')
         ? currentWidget.constructor.name.replace('Widget', '')
         : widgetType;

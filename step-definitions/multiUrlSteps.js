@@ -1,100 +1,115 @@
 const { Given, When, Then } = require('@cucumber/cucumber');
 const { WidgetFactory } = require('../pages/widgets/WidgetFactory');
-const { expect } = require('@playwright/test');
-const XLSX = require('xlsx');
+const { SheetUtils } = require('../utils/SheetUtils');
 const path = require('path');
+const fs = require('fs');
 
 let widgetDataList = [];
 
-Given('I read the widget URLs from {string}', function (filePath) {
-    const fullPath = path.resolve(filePath);
-    console.log(`[Multi-URL] Reading Excel file from: ${fullPath}`);
-    const workbook = XLSX.readFile(fullPath);
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-    widgetDataList = XLSX.utils.sheet_to_json(sheet);
-    console.log(`[Multi-URL] Loaded ${widgetDataList.length} URLs for testing.`);
+// Helper to load config
+const getSheetConfig = (configPath) => {
+    const fullPath = path.resolve(configPath);
+    return JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+};
+
+Given('I fetch the list of customer URLs from {string}', async function (source) {
+    if (source === 'GoogleSheet') {
+        const config = getSheetConfig('testData/googleSheetConfig.json');
+        console.log(`[Multi-URL] Fetching customer URLs from Google Sheet: ${config.sheetUrl}`);
+        try {
+            widgetDataList = await SheetUtils.fetchGoogleSheet(config.sheetUrl);
+            console.log(`[Multi-URL] Successfully fetched ${widgetDataList.length} URLs from Google Sheet.`);
+        } catch (e) {
+            console.error(`[Multi-URL] Error fetching from Google Sheet: ${e.message}`);
+            throw e;
+        }
+    } else {
+        console.log(`[Multi-URL] Fetching from source: ${source}`);
+    }
 });
 
-Then('I sequentially validate each widget URL', { timeout: 3600 * 1000 }, async function () {
-    for (const data of widgetDataList) {
-        const url = data.Url;
-        const websiteName = data.WebsiteName;
+
+Then('I sequentially process each URL by executing the following workflow:', { timeout: 300 * 60 * 1000 }, async function (dataTable) {
+    const steps = dataTable.rows().flat();
+    console.log(`[Multi-URL] Starting sequential audit for ${widgetDataList.length} URLs with workflow:`);
+    steps.forEach(step => console.log(`  - ${step}`));
+
+    for (let i = 0; i < widgetDataList.length; i++) {
+        console.log(`[Multi-URL] Processing URL ${i + 1} of ${widgetDataList.length}`);
+        const data = widgetDataList[i];
+        // Normalize keys (handle 'Url', 'URL', 'url', or 'Widget Link')
+        const url = data.Url || data.URL || data.url || data['Widget Link'] || data['WidgetLink'];
+
+        // Extract website name or domain as fallback
+        let websiteName = data.WebsiteName || data.Name;
+        if (!websiteName && url) {
+            try {
+                const domain = new URL(url).hostname.replace('www.', '').split('.')[0];
+                websiteName = domain.charAt(0).toUpperCase() + domain.slice(1);
+            } catch (e) {
+                websiteName = `Site_${i + 1}`;
+            }
+        }
+        websiteName = websiteName || `Site_${i + 1}`;
+
+        if (!url) {
+            console.warn(`[Multi-URL] Skipping row ${i + 1} due to missing URL.`);
+            continue;
+        }
 
         console.log(`\n==================================================`);
-        console.log(`[Multi-URL] Starting test for: ${websiteName} (${url})`);
+        console.log(`>>> [URL ${i + 1}/${widgetDataList.length}] ${websiteName}`);
+        console.log(`>>> Target: ${url}`);
         console.log(`==================================================\n`);
 
         try {
+            // 0. Reset Viewport to Desktop (ensure clean state)
+            await this.page.setViewportSize({ width: 1280, height: 800 });
+
             // 1. Load URL
             await loadWidgetUrl(this.page, url);
 
-            // 2. Detect Widget
-            const detectedInstances = await WidgetFactory.detectAndCreate(this.page, 'Auto', { widgets: [] }); // Empty config as we autodect
+            // 2. Detect Widgets
+            const detectedInstances = await WidgetFactory.detectAndCreate(this.page, 'Auto', { widgets: [] });
+
             if (detectedInstances.length === 0) {
                 console.warn(`[Multi-URL] No Feedspace widgets detected on ${url}`);
-                // Create a "Not Found" report to inform the user
+                // Create a generic report to indicate failure/absence
                 const dummyWidget = WidgetFactory.createInstance('Base', this.page, { type: 'Base', uiRules: {} });
-                dummyWidget.logAudit(`Feedspace widget not embedded or detected on this URL: ${url}`, 'fail');
+                dummyWidget.logAudit(`Feedspace widget not detected on this URL: ${url}`, 'fail');
                 await dummyWidget.generateReport('NotFound', websiteName);
-                console.log(`[Multi-URL] Generated "NotFound" report for ${websiteName}`);
-                continue; // Move to next URL immediately
+                continue;
             }
             console.log(`[Multi-URL] Detected ${detectedInstances.length} widgets.`);
 
-            // 3. Validate & Audit
+            // 3. Comprehensive Audit (Browser Mode)
             for (const widget of detectedInstances) {
                 const widgetName = widget.constructor.name;
-                console.log(`[Multi-URL] Validating ${widgetName}...`);
+                console.log(`[Multi-URL] Auditing ${widgetName} (Browser Mode)...`);
 
-                await widget.validateVisibility();
-                await widget.validateBranding();
-                await widget.validateCTA();
-                await widget.validateDateConsistency();
-                await widget.validateLayoutIntegrity();
-                await widget.validateAlignment();
-                await widget.validateTextReadability();
-                await widget.runAccessibilityAudit();
-                await widget.validateMediaIntegrity();
-                await widget.validateReadMore();
-                await widget.validateCardConsistency();
-
-                // Specialized HorizontalScroll Checks (matching @Individual_HorizontalScroll)
-                if (widgetName === 'HorizontalScrollWidget') {
-                    console.log('[Multi-URL] [HorizontalScroll] Verifying specialized scrolling behavior...');
-                    await widget.validateHorizontalScrolling();
-
-                    console.log('[Multi-URL] [HorizontalScroll] Verifying specialized review counts & classifications...');
-                    await widget.validateReviewCountsAndTypes();
-                }
-
-                if (typeof widget.validateUniqueBehaviors === 'function' && widgetName !== 'HorizontalScrollWidget') {
-                    await widget.validateUniqueBehaviors();
-                }
-
-                // 4. Generate Report (Browser)
-                const typeName = widgetName.replace('Widget', '');
-                await widget.generateReport(typeName, websiteName);
+                // Use the standardized comprehensive audit method
+                await widget.performComprehensiveAudit();
             }
 
-            // 5. Persistence Check (Reload)
+            // 4. Persistence Check (Reload)
             console.log(`[Multi-URL] Verifying persistence via reload...`);
-            // Capture state
+
+            // Capture state to persist across reload
             const savedStates = detectedInstances.map(w => ({
                 type: w.constructor.name,
                 auditLog: [...w.auditLog],
                 reviewStats: { ...w.reviewStats },
-                detailedFailures: [...w.detailedFailures], // Ensure failures are saved
-                accessibilityResults: [...w.accessibilityResults] // Ensure A11y is saved
+                detailedFailures: [...w.detailedFailures],
+                accessibilityResults: [...w.accessibilityResults]
             }));
 
             await this.page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
             await this.page.waitForTimeout(3000);
 
-            // Re-detect
+            // Re-detect widgets after reload
             const newWidgets = await WidgetFactory.detectAndCreate(this.page, 'Auto', { widgets: [] });
 
-            // Restore state for final report if new instances found
+            // Restore state to new instances
             newWidgets.forEach(newWidget => {
                 const saved = savedStates.find(s => s.type === newWidget.constructor.name);
                 if (saved) {
@@ -105,19 +120,22 @@ Then('I sequentially validate each widget URL', { timeout: 3600 * 1000 }, async 
                 }
             });
 
-            // 6. Mobile Responsiveness
+            // 5. Mobile Responsiveness & Final Report
             for (const widget of newWidgets) {
                 await widget.validateResponsiveness('Mobile');
-            }
 
-            // 7. Final Report (Mobile)
-            for (const widget of newWidgets) {
                 const typeName = widget.constructor.name.replace('Widget', '');
+                // Force report type to 'Combined' for a single consolidated report
+                widget.reportType = 'Combined';
+
+                // Final report generation - includes logs from BEFORE and AFTER reload
+                await widget.finalizeAuditCoverage();
                 await widget.generateReport(typeName, websiteName);
             }
 
         } catch (error) {
             console.error(`[Multi-URL] Failed testing ${url}: ${error.message}`);
+            // Continue to next URL despite error
         }
     }
 });
