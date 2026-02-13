@@ -7,11 +7,45 @@ const { VerticalScrollWidget } = require('./VerticalScrollWidget');
 const { HorizontalScrollWidget } = require('./HorizontalScrollWidget');
 const { FloatingCardsWidget } = require('./FloatingCardsWidget');
 const { BaseWidget } = require('./BaseWidget');
+const { WidgetTypeConstants } = require('./WidgetTypeConstants');
 
 class WidgetFactory {
     static async detectAndCreate(page, widgetTypeHint, config) {
         console.log(`Dynamic Detection: Searching for widget type: ${widgetTypeHint}`);
-        // Scroll top to bottom to trigger lazy loading
+
+        const frameTypeMap = new Map();
+
+        // Listener for API response to identify widget type by ID
+        const responseHandler = async (response) => {
+            if (response.url().includes('api/v1/widget/getwidget') && response.status() === 200) {
+                try {
+                    const json = await response.json();
+                    if (json && json.widget && json.widget.type) {
+                        const typeId = json.widget.type;
+                        const frame = response.frame();
+                        if (WidgetTypeConstants[typeId] && frame) {
+                            const detectedType = WidgetTypeConstants[typeId];
+                            console.log(`[API Detection] Intercepted widget type ID: ${typeId} -> ${detectedType} for frame: ${frame.url()}`);
+
+                            if (!frameTypeMap.has(frame)) {
+                                frameTypeMap.set(frame, []);
+                            }
+                            const types = frameTypeMap.get(frame);
+                            if (!types.includes(detectedType)) {
+                                types.push(detectedType);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn(`[API Detection] Failed to parse widget response: ${e.message}`);
+                }
+            }
+        };
+
+        // Attach listener
+        page.on('response', responseHandler);
+
+        // Scroll top to bottom to trigger lazy loading and network requests
         await page.evaluate(async () => {
             await new Promise((resolve) => {
                 let totalHeight = 0;
@@ -48,14 +82,24 @@ class WidgetFactory {
         // 1. Check Main Frame FIRST (Priority)
         console.log('Scanning Main Frame for widgets...');
         const mainFrame = page.mainFrame();
-        for (const [type, selector] of Object.entries(detectors)) {
-            try {
-                const locator = mainFrame.locator(selector).first();
-                if (await locator.count() > 0 && await locator.isVisible().catch(() => false)) {
-                    console.log(`[Main Frame] Widget detected: ${type}`);
-                    detectedInfo.push({ type, frame: mainFrame });
-                }
-            } catch (e) { /* ignore */ }
+
+        // Check API Detection for Main Frame
+        if (frameTypeMap.has(mainFrame)) {
+            const apiTypes = frameTypeMap.get(mainFrame);
+            for (const apiType of apiTypes) {
+                console.log(`[Main Frame] Widget detected via API: ${apiType}`);
+                detectedInfo.push({ type: apiType.toLowerCase(), frame: mainFrame });
+            }
+        } else {
+            for (const [type, selector] of Object.entries(detectors)) {
+                try {
+                    const locator = mainFrame.locator(selector).first();
+                    if (await locator.count() > 0 && await locator.isVisible().catch(() => false)) {
+                        console.log(`[Main Frame] Widget detected via selector: ${type}`);
+                        detectedInfo.push({ type, frame: mainFrame });
+                    }
+                } catch (e) { /* ignore */ }
+            }
         }
 
         // 2. Check Child Frames if nothing found or to find others
@@ -65,9 +109,20 @@ class WidgetFactory {
         for (const frame of childFrames) {
             try {
                 const frameUrl = frame.url();
+
+                // 1. API Detection (Highest Priority)
+                if (frameTypeMap.has(frame)) {
+                    const apiTypes = frameTypeMap.get(frame);
+                    for (const apiType of apiTypes) {
+                        console.log(`[Child Frame] Widget detected via API: ${apiType} in ${frameUrl}`);
+                        detectedInfo.push({ type: apiType.toLowerCase(), frame });
+                    }
+                    continue; // Skip other checks if API confirmed
+                }
+
                 console.log(`Checking frame: ${frameUrl.substring(0, 100)}${frameUrl.length > 100 ? '...' : ''}`);
 
-                // 1. Specific API Key Detection (High Priority)
+                // 2. Specific API Key Detection (Legacy)
                 if (frameUrl.includes('78ee3e50-eca8-468c-9c54-dd91a7e7cd09')) {
                     if (await frame.locator('.feedspace-element-container').first().isVisible({ timeout: 1000 })) {
                         console.log('Widget detected: masonry via API Key in iframe.');
@@ -88,7 +143,7 @@ class WidgetFactory {
                     }
                 }
 
-                // 2. Selector-based Detection
+                // 3. Selector-based Detection
                 for (const [type, selector] of Object.entries(detectors)) {
                     // Skip if already detected via API key in this frame
                     if (detectedInfo.some(d => d.frame === frame && d.type === type)) continue;
