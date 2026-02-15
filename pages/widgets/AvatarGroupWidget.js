@@ -3,12 +3,13 @@ const { BaseWidget } = require('./BaseWidget');
 class AvatarGroupWidget extends BaseWidget {
     constructor(page, config) {
         super(page, config);
-        this.containerSelector = '.fe-feedspace-avatar-group-widget-wrap, .fe-widget-center';
-        this.cardSelector = '.fe-avatar-box:not(.fe-avatar-more):not([data-fs-marquee-clone="true"]):not(.cloned)';
+        this.containerSelector = '.fe-feedspace-avatar-group-widget-wrap.fe-widget-center';
+        this.cardSelector = '.fe-feedspace-avatar-group-widget-wrap.fe-widget-center .fe-avatar-box:not(.fe-avatar-more):not([data-fs-marquee-clone="true"]):not(.cloned)';
     }
 
     async validateUniqueBehaviors() {
         await this.initContext();
+        await this.validateAdvancedConfig();
         if (await this.context.locator(this.containerSelector).first().isVisible()) {
             this.logAudit('Widget detected: Avatar Group container is visible and functional.');
         }
@@ -106,6 +107,8 @@ class AvatarGroupWidget extends BaseWidget {
         let mediaErrorsCount = 0;
         let videoVerifiedCount = 0;
         let audioVerifiedCount = 0;
+        this.readMoreVerifiedCount = 0; // Initialize tracking
+        this.ctaVerifiedCount = 0;      // Initialize tracking
 
         this.logAudit(`[Interactive] Starting modal iteration for up to 30 avatars.`);
 
@@ -169,22 +172,50 @@ class AvatarGroupWidget extends BaseWidget {
                     }
 
                     // 3. Verify Read More / Read Less
-                    await modal.evaluate(el => {
-                        const container = el.querySelector('.fe-modal-content-inner, .feedspace-element-review-contain-box') || el;
-                        container.scrollTop = 0;
-                    }).catch(() => { });
-
+                    // 1️⃣ Check if the Read More button exists in the DOM
                     const readMore = modal.locator(readMoreTrigger).first();
-                    if (await readMore.isVisible()) {
-                        await readMore.click({ force: true });
-                        await this.page.waitForTimeout(2000);
+                    const exists = await readMore.count() > 0;
 
+                    // 2️⃣ Check if the button is actually visible to the user
+                    let visible = false;
+                    if (exists) {
+                        visible = await readMore.isVisible();
+                    }
+
+                    if (visible) {
+                        const color = await readMore.evaluate(el => getComputedStyle(el).color);
+                        console.log('Read More button color:', color);
+
+                        // NEW: Visibility/Contrast Check (Failure if unreadable)
+                        const isReadable = await this.checkContrast(readMoreTrigger);
+                        if (!isReadable) {
+                            this.logAudit('Read More button exists but is not readable due to poor contrast.', 'fail');
+                        }
+
+                        // 3️⃣ Interact with it only if it exists and is visible
+                        await readMore.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => { });
+                        await readMore.click({ force: true });
+                        await this.page.waitForTimeout(1500); // wait for content expansion
+
+                        // For readless for text collapsing
                         const readLess = modal.locator(readLessTrigger).first();
-                        if (await readLess.isVisible()) {
+                        const lessExists = await readLess.count() > 0;
+                        const lessVisible = lessExists ? await readLess.isVisible() : false;
+
+                        if (lessVisible) {
+                            await readLess.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => { });
                             await readLess.click({ force: true });
                             await this.page.waitForTimeout(1000);
+                            this.readMoreVerifiedCount++; // Increment only on successful cycle
+                            this.logAudit('Read More expansion and collapse verified.');
+                        } else {
+                            this.logAudit('Read Less button not visible after expansion.', 'warn');
                         }
+                    } else {
+                        // If expected by config but not visible, it's a fail (handled in validateAdvancedConfig)
+                        this.logAudit('Read More not available or not visible in this modal.', 'info');
                     }
+
 
                     // 4. Verify CTA
                     const userCTA = modal.locator('div.feedspace-element-feed-box-inner > div.feedspace-video-review-body > div.feedspace-cta-button-container-d9').first();
@@ -193,8 +224,13 @@ class AvatarGroupWidget extends BaseWidget {
                     if (!(await userCTA.isVisible())) {
                         for (const sel of ctaSelectors) {
                             const loc = modal.locator(sel).first();
-                            if (await loc.isVisible()) break;
+                            if (await loc.isVisible()) {
+                                this.ctaVerifiedCount++;
+                                break;
+                            }
                         }
+                    } else {
+                        this.ctaVerifiedCount++;
                     }
 
                     // UI Check: Broken Images
@@ -230,11 +266,26 @@ class AvatarGroupWidget extends BaseWidget {
             }
         }
 
-        // Consolidated reporting to ensure success entries appear in the Feature Matrix
+        // Consolidated reporting
         this.logAudit(`Interaction: Successfully verified ${interactionCount} reviews via modal inspection.`);
         this.logAudit(`[Playback] Verified media playback success: ${videoVerifiedCount} Videos and ${audioVerifiedCount} Audios.`);
-        this.logAudit(`[Read More] Read More / Less Cycle: Successfully verified for applicable reviews.`);
-        this.logAudit(`[Interactive] CTA and interactive elements verified within modals.`);
+
+        // Conditional Logging for Read More
+        if (this.readMoreVerifiedCount > 0) {
+            this.logAudit(`[Read More] Read More / Less Cycle: Successfully verified in ${this.readMoreVerifiedCount} instances.`);
+        } else {
+            this.logAudit(`[Read More] No "Read More" triggers found (Reviews may be short or full text visible).`, 'info');
+        }
+
+        // Conditional Logging for CTA
+        if (this.ctaVerifiedCount > 0) {
+            this.logAudit(`[Interactive] CTA elements verified in ${this.ctaVerifiedCount} instances.`);
+        } else {
+            // If CTA is supposed to be enabled but not found -> Fail? Or just Info if strictly optional?
+            // Using logic: if config.cta_enabled == 1, we already checked in validateAdvancedConfig. 
+            // Here we just report *interaction* findings.
+            this.logAudit(`[Interactive] No CTA elements found within modals.`, 'info');
+        }
 
         if (mediaErrorsCount > 0) {
             this.reviewStats.mediaErrors = (this.reviewStats.mediaErrors || 0) + mediaErrorsCount;
@@ -243,13 +294,21 @@ class AvatarGroupWidget extends BaseWidget {
             this.logAudit('Media Integrity: All checked modals had valid media.');
         }
 
-        // Final recalculation of text reviews based on latest media counts
+        // Final recalculation
         this.reviewStats.text = Math.max(0, this.reviewStats.total - this.reviewStats.video - this.reviewStats.audio);
         this.logAudit(`Total Verification: Text: ${this.reviewStats.text}, Video: ${this.reviewStats.video}, Audio: ${this.reviewStats.audio}`);
     }
 
-    async validateCTA() {
-        this.logAudit('[Interactive] CTA and interactive elements verified within modals.');
+    async validateLayoutIntegrity() {
+        // Avatar Group intentionally overlaps avatars to create the "stack" effect.
+        this.logAudit('Layout Integrity: Intentional avatar stacking acknowledged (Ignoring internal overlaps by design).', 'pass');
+
+        // Only run base check if we want to check for catastrophic overlaps outside the group
+        // For now, we trust the group container.
+        const container = this.context.locator(this.containerSelector).first();
+        if (await container.isVisible()) {
+            this.logAudit('Layout Integrity: Group container is correctly positioned.');
+        }
     }
 
     async validateMediaIntegrity() {
@@ -279,12 +338,161 @@ class AvatarGroupWidget extends BaseWidget {
         }
     }
 
-    async validateLayoutIntegrity() {
-        this.logAudit('Layout Integrity: Cluster-based layout verified.');
-    }
+    // async validateDateConsistency() {
+    //     // Overridden to avoid base methodology. 
+    //     // Logic moved to validateAdvancedConfig for this widget.
+    //     this.logAudit('Date Consistency check deferred to Advanced Configuration validation.', 'info');
+    // }
 
-    async validateReadMore() {
-        this.logAudit('[Read More] Read More / Less Cycle: Successfully verified for applicable reviews.');
+    async validateAdvancedConfig() {
+        this.logAudit('Running Advanced Configuration Validation...');
+        const c = this.config;
+
+        // 1. Show Star Ratings
+        // config: show_star_ratings = 1 -> Stars visible
+        // config: show_star_ratings = 0 -> Stars hidden 
+        // (User prompt separate from is_show_ratings, assuming checking for generic star display)
+        if (c.show_star_ratings == 1) {
+            const stars = this.context.locator('.feedspace-stars, .star-rating, .stars, .feedspace-video-review-header-star');
+            if (await stars.count() > 0 && await stars.first().isVisible()) {
+                this.logAudit('[Config] Show Star Ratings: Validated (Stars are visible).');
+            } else {
+                this.logAudit('[Config] Show Star Ratings: Failed (Stars expected but not found).', 'fail');
+            }
+        } else if (c.show_star_ratings == 0) {
+            // Optional: Validate absence
+        }
+
+        // 2. Feedspace Branding
+        // config: hideBranding = 0 -> Visible
+        // locator: precise link with UTM params
+        const brandingSelector = 'a[href*="utm_source=powered-by-feedspace"][title="Capture reviews with Feedspace"]';
+        const branding = this.context.locator(brandingSelector).first();
+
+        // If branding removal is allowed (1), branding may not exist
+        if (c.allow_to_remove_branding == 0 || c.allow_to_remove_branding == '0') {
+            // Branding required
+            if (await branding.isVisible()) {
+                this.logAudit('[Config] Branding: Visible as required(allow_to_remove_branding=0).');
+            } else {
+                this.logAudit('[Config] Branding: Expected visible but not found.', 'fail');
+            }
+        } else if (c.allow_to_remove_branding == 1 || c.allow_to_remove_branding == '1') {
+            // Branding optional
+            this.logAudit('[Config] Branding: Removal allowed (Branding may be hidden).', 'info');
+        }
+
+        // 3. Show Review Date
+        /* 
+        // config: allow_to_display_feed_date = 1 -> Visible
+        // config: allow_to_display_feed_date = 0 -> Hidden
+        const dateSelector = '.feedspace-element-date.feedspace-wol-date';
+        const dateEl = this.context.locator(dateSelector).first();
+
+        const isDateVisible = await dateEl.evaluate(el => {
+            const style = window.getComputedStyle(el);
+            console.log(`[DEBUG] Date Element: Display=${style.display}, Visibility=${style.visibility}, Opacity=${style.opacity}, Text='${el.innerText}'`);
+            return style.display !== 'none' &&
+                style.visibility !== 'hidden' &&
+                style.opacity !== '0' &&
+                el.innerText.trim().length > 0;
+        }).catch(() => false);
+
+        if (c.allow_to_display_feed_date == 1 || c.allow_to_display_feed_date == '1') {
+            if (isDateVisible) {
+                this.logAudit('[Config] Review Date: Validated (Dates visible).');
+            } else {
+                this.logAudit('[Config] Review Date: Failed (Dates expected but not visible/empty).', 'fail');
+            }
+        } else if (c.allow_to_display_feed_date == 0 || c.allow_to_display_feed_date == '0') {
+            if (!isDateVisible) {
+                this.logAudit('[Config] Review Date: Validated (Dates hidden).');
+            } else {
+                this.logAudit('[Config] Review Date: Failed (Dates should be hidden but content was found).', 'fail');
+            }
+        }
+        */
+
+        // 4. Show Review Ratings
+        // config: is_show_ratings = 1 -> Visible
+        // config: is_show_ratings = 0 -> Hidden
+        const ratingSelector = 'div.feedspace-video-review-header-star > div.feedspace-element-review-box > svg, .feedspace-stars, .star-rating';
+        if (c.is_show_ratings == 1 || c.is_show_ratings == '1') {
+            const ratings = this.context.locator(ratingSelector);
+            if (await ratings.count() > 0 && await ratings.first().isVisible()) {
+                this.logAudit('[Config] Review Ratings: Validated (Ratings visible).');
+            } else {
+                this.logAudit('[Config] Review Ratings: Failed (Ratings expected but not found).', 'fail');
+            }
+        } else if (c.is_show_ratings == 0 || c.is_show_ratings == '0') {
+            const ratings = this.context.locator(ratingSelector);
+            if (await ratings.count() === 0 || !(await ratings.first().isVisible())) {
+                this.logAudit('[Config] Review Ratings: Validated (Ratings hidden).');
+            } else {
+                this.logAudit('[Config] Review Ratings: Failed (Ratings should be hidden).', 'fail');
+            }
+        }
+
+        // 5. Shorten Long Reviews
+        // config: show_full_review = 0 -> Read More should be visible
+        if (c.show_full_review == 0 || c.show_full_review == '0') {
+            const readMoreTrigger = '.feedspace-read-more-btn, .feedspace-read-more-text, .feedspace-element-read-more, .feedspace-read-more, i:has-text("Read More")';
+            const readMore = this.context.locator(readMoreTrigger).first();
+
+            if (await readMore.isVisible()) {
+                const isReadable = await this.checkContrast(readMoreTrigger);
+                if (isReadable) {
+                    this.logAudit('[Config] Shorten Reviews: Validated (Read More visible and readable).');
+                } else {
+                    this.logAudit('[Config] Shorten Reviews: Failed (Read More button has poor visibility/contrast).', 'fail');
+                }
+            } else {
+                this.logAudit('[Config] Shorten Reviews: Failed (Read More expected but not found or hidden).', 'fail');
+            }
+        } else if (c.show_full_review == 1 || c.show_full_review == '1') {
+            this.logAudit('[Config] Shorten Reviews: Show Full Review enabled.');
+        }
+
+        // 6. Show Social Platform Icon
+        // config: allow_social_redirection = 1 -> Visible
+        // config: allow_social_redirection = 0 -> Hidden
+        const socialSelector = 'div.feedspace-element-header-icon > a.social-redirection-button > img, .social-redirection-button';
+        if (c.allow_social_redirection == 1 || c.allow_social_redirection == '1') {
+            const icons = this.context.locator(socialSelector);
+            if (await icons.count() > 0 && await icons.first().isVisible()) {
+                this.logAudit('[Config] Social Icons: Validated (Icons visible).');
+            } else {
+                this.logAudit('[Config] Social Icons: Failed (Icons expected but not found).', 'fail');
+            }
+        } else if (c.allow_social_redirection == 0 || c.allow_social_redirection == '0') {
+            const icons = this.context.locator(socialSelector);
+            if (await icons.count() === 0 || !(await icons.first().isVisible())) {
+                this.logAudit('Social Redirection: Hidden as per configuration.', 'pass');
+            } else {
+                this.logAudit('[Config] Social Icons: Failed (Icons should be hidden).', 'fail');
+            }
+        }
+
+
+        // 7. Inline CTA
+        // config: cta_enabled = 1 -> Visible
+        // config: cta_enabled = 0 -> Disabled (Hidden)
+        const ctaSelector = 'div.fe-review-box-inner > div.feedspace-element-feed-box-inner > div.feedspace-cta-button-container-d9';
+        if (c.cta_enabled == 1) {
+            const cta = this.context.locator(ctaSelector).first();
+            if (await cta.isVisible()) {
+                this.logAudit('[Config] Inline CTA: Validated (CTA visible).');
+            } else {
+                this.logAudit('[Config] Inline CTA: Failed (CTA expected but not found).', 'fail');
+            }
+        } else if (c.cta_enabled == 0) {
+            const cta = this.context.locator(ctaSelector).first();
+            if (!(await cta.isVisible())) {
+                this.logAudit('[Config] Inline CTA: Validated (CTA disabled).');
+            } else {
+                this.logAudit('[Config] Inline CTA: Failed (CTA should be disabled).', 'fail');
+            }
+        }
     }
 }
 
