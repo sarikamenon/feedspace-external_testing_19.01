@@ -115,6 +115,24 @@ class FloatingCardsWidget extends BaseWidget {
                     this.logAudit(`Interaction: [Progress ${seenPopups.size}/${targetCount}] Clicked card: "${abbreviated}..."`);
 
                     // --- Improved Read More / Read Less Check ---
+                    // These locators match the user's provided FloatingCardsConfig
+                    const is_show_ratings = popup.locator(`div.feedspace-element-feed-box-inner > div.feedspace-element-review-box > svg`);
+                    const show_platform_icon = popup.locator(`div.feedspace-element-header-icon > a > img`);
+                    const cta_locator = popup.locator(`.feedspace-cta-button-container-d13`);
+                    const date_locator = popup.locator('.feedspace-element-date.feedspace-wol-date');
+                    const read_less_locator = popup.locator('.feedspace-read-less-btn.feedspace-element-read-more.feedspace-element-read-more-open');
+
+                    // Check for visibility within the popup
+                    const hasRatings = await is_show_ratings.first().isVisible().catch(() => false);
+                    const hasIcon = await show_platform_icon.first().isVisible().catch(() => false);
+                    const hasCTA = await cta_locator.first().isVisible().catch(() => false);
+                    const hasDate = await date_locator.first().isVisible().catch(() => false);
+
+                    if (hasRatings) this.logAudit(`Feature: Ratings visible in popup.`);
+                    if (hasIcon) this.logAudit(`Feature: Platform icon visible in popup.`);
+                    if (hasCTA) this.logAudit(`Feature: CTA button visible in popup.`);
+                    if (hasDate) this.logAudit(`Feature: Date visible in popup.`);
+
                     const expansionSelectors = [
                         '.feedspace-read-more-text',
                         '.feedspace-element-read-more-text-span',
@@ -166,6 +184,7 @@ class FloatingCardsWidget extends BaseWidget {
                         await this.page.waitForTimeout(500);
 
                         const retractionSelectors = [
+                            '.feedspace-read-less-btn.feedspace-element-read-more.feedspace-element-read-more-open',
                             '.feedspace-read-less-text',
                             '.feedspace-element-read-less-text-span',
                             '.read-less',

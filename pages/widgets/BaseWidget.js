@@ -140,7 +140,7 @@ class BaseWidget {
             });
 
             // 1. Check specific date element if present
-            const dateElement = card.locator('.date, .review-date, .feedspace-element-date, .feedspace-element-feed-date, .feedspace-element-date-text').first();
+            const dateElement = card.locator('.date, .review-date, .feedspace-element-date, .feedspace-element-feed-date, .feedspace-element-date-text, .feedspace-wol-date').first();
             if (await dateElement.count() > 0) {
                 const dText = await dateElement.innerText();
                 // Empty is OK per user request, but literal 'undefined' is not
@@ -189,8 +189,73 @@ class BaseWidget {
         if (invalidDateCards.length > 0) {
             this.logAudit(`Date Consistency: Found 'undefined' or 'null' strings in cards #${invalidDateCards.join(', #')}`, 'fail');
         } else {
-            this.logAudit('Date Consistency: All review dates are valid or intentionally empty (optional).');
+            const configDate = this.config.allow_to_display_feed_date;
+            const dateElements = this.context.locator('.date, .review-date, .feedspace-element-date, .feedspace-element-feed-date, .feedspace-element-date-text, .feedspace-wol-date');
+            const foundCount = await dateElements.count();
+
+            if (configDate == 0 || configDate === '0') {
+                if (foundCount === 0) {
+                    this.logAudit('Date Consistency: Dates are hidden as per configuration.', 'pass');
+                } else {
+                    // Check if they are actually visible AND valid
+                    const firstEl = dateElements.first();
+                    const isVisible = await firstEl.isVisible().catch(() => false);
+                    const hasText = await firstEl.innerText().then(t => t.trim().length > 0).catch(() => false);
+
+                    if (!isVisible || !hasText) {
+                        this.logAudit('Date Consistency: Dates are hidden (CSS/Empty) as per configuration.', 'pass');
+                    } else {
+                        this.logAudit('Date Consistency: Dates should be hidden but were found visible.', 'fail');
+                    }
+                }
+            } else if (configDate == 1 || configDate === '1') {
+                if (foundCount > 0 && await dateElements.first().isVisible()) {
+                    this.logAudit('Date Consistency: All review dates are valid and visible.');
+                } else {
+                    this.logAudit('Date Consistency: Dates expected but not found or hidden.', 'fail');
+                }
+            } else {
+                if (foundCount > 0) {
+                    this.logAudit('Date Consistency: All review dates are valid or intentionally empty (optional).');
+                } else {
+                    this.logAudit('Date Consistency: No review dates found in this layout.', 'info');
+                }
+            }
         }
+    }
+
+    async checkContrast(selector) {
+        const element = this.context.locator(selector).first();
+        if (!(await element.isVisible())) return true;
+
+        const result = await element.evaluate(el => {
+            const style = window.getComputedStyle(el);
+            const color = style.color;
+            const bgColor = (function getBgColor(e) {
+                const bg = window.getComputedStyle(e).backgroundColor;
+                if (bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') return bg;
+                if (e.parentElement) return getBgColor(e.parentElement);
+                return 'rgb(255, 255, 255)'; // Fallback to white body
+            })(el);
+
+            function parseRGB(rgb) {
+                const match = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+                return match ? [parseInt(match[1]), parseInt(match[2]), parseInt(match[3])] : [255, 255, 255];
+            }
+
+            const [r1, g1, b1] = parseRGB(color);
+            const [r2, g2, b2] = parseRGB(bgColor);
+
+            // Simple Euclidean distance for "is it almost same" check (0-442 range)
+            const diff = Math.sqrt(Math.pow(r1 - r2, 2) + Math.pow(g1 - g2, 2) + Math.pow(b1 - b2, 2));
+            return { color, bgColor, diff };
+        });
+
+        if (result.diff < 30) { // Very low contrast
+            this.logAudit(`UI Integrity: Element "${selector}" has very low visibility (Color: ${result.color} on ${result.bgColor}).`, 'fail');
+            return false;
+        }
+        return true;
     }
 
     async validateLayoutIntegrity() {
@@ -209,6 +274,9 @@ class BaseWidget {
         // Performance Optimization: Batch process all card positions
         const cardData = await cards.evaluateAll((elements, containerRect) => {
             return elements.map((el, i) => {
+                // Skip Clones to prevent false positive overlap/layout issues
+                if (el.closest('.slick-cloned, .clone, .duplicate, [data-fs-marquee-clone="true"]')) return null;
+
                 const rect = el.getBoundingClientRect();
                 const isVisible = rect.width > 0 && rect.height > 0 &&
                     window.getComputedStyle(el).display !== 'none' &&
@@ -295,6 +363,9 @@ class BaseWidget {
         // Performance Optimization: Batch process all card bounding boxes
         const cardData = await cards.evaluateAll(elements => {
             return elements.map((el, i) => {
+                // Skip Clones
+                if (el.closest('.slick-cloned, .clone, .duplicate, [data-fs-marquee-clone="true"]')) return null;
+
                 const rect = el.getBoundingClientRect();
                 const isVisible = rect.width > 0 && rect.height > 0 &&
                     window.getComputedStyle(el).display !== 'none';
@@ -350,6 +421,9 @@ class BaseWidget {
         // Performance Optimization: Batch process all text elements
         const textData = await textElements.evaluateAll(elements => {
             return elements.map((el, i) => {
+                // Skip Clones
+                if (el.closest('.slick-cloned, .clone, .duplicate, [data-fs-marquee-clone="true"]')) return null;
+
                 // Add 2px tolerance to avoid sub-pixel false positives
                 let isOverflowing = el.scrollHeight > el.clientHeight + 2 || el.scrollWidth > el.clientWidth + 2;
 
@@ -555,7 +629,7 @@ class BaseWidget {
         const imageData = await images.evaluateAll(elements => {
             return elements.map((el, i) => {
                 // Skip Clones
-                if (el.closest('[data-fs-marquee-clone="true"], .cloned, .clone')) return null;
+                if (el.closest('[data-fs-marquee-clone="true"], .cloned, .clone, .duplicate, .slick-cloned')) return null;
                 if (el.getAttribute('aria-hidden') === 'true') return null;
 
                 // Skip tiny/empty images
@@ -625,7 +699,7 @@ class BaseWidget {
 
         for (let i = 0; i < videoCount; i++) {
             const vid = videos.nth(i);
-            const shouldSkip = await vid.evaluate(el => !!el.closest('[data-fs-marquee-clone="true"], .cloned, .clone'));
+            const shouldSkip = await vid.evaluate(el => !!el.closest('[data-fs-marquee-clone="true"], .cloned, .clone, .duplicate, .slick-cloned'));
             if (shouldSkip) continue;
 
             const tag = await vid.evaluate(v => v.tagName.toLowerCase());
@@ -747,6 +821,16 @@ class BaseWidget {
                 this.logAudit(`${cat.key} Checked (No specialized ${cat.label} required or applicable).`, 'info');
             }
         });
+    }
+
+    getReportData() {
+        return {
+            auditLog: this.auditLog,
+            reviewStats: this.reviewStats,
+            detailedFailures: this.detailedFailures,
+            accessibilityResults: this.accessibilityResults,
+            generatedReports: Array.from(this.generatedReports || [])
+        };
     }
 
     async validateCardConsistency() {

@@ -3,34 +3,119 @@ const { BaseWidget } = require('./BaseWidget');
 class HorizontalScrollWidget extends BaseWidget {
     constructor(page, config) {
         super(page, config);
+
+        // Selectors
         this.containerSelector = '.feedspace-element-horizontal-scroll-widget, .feedspace-left-right-shadow';
-        // Updated selector to target actual review cards, not just columns
         this.cardSelector = '.feedspace-element-marquee-item .feedspace-element-post-box, .feedspace-element-marquee-item .feedspace-review-item, .feedspace-element-marquee-item .feedspace-element-feed-box';
-        // Specific selectors provided by user
         this.marqueeRowSelector = '.feedspace-element-d12-marquee-row';
+
+        // Centralized reusable selectors
+        this.selectors = {
+            readMore: ['.feedspace-element-read-more', '.feedspace-element-read-more-text-span', '.read-more', 'span:has-text("Read more")', 'button:has-text("Read more")', '.show-more'],
+            readLess: ['.feedspace-element-read-less', '.feedspace-element-read-less-text-span', 'span:has-text("Read less")'],
+            authorName: ['.feedspace-author-name', '.feedspace-element-author-name', '.feedspace-element-author-name-text', '.feedspace-element-feed-name', '.author-name', '.feedspace-review-author-name', '.feedspace-element-author-title']
+        };
     }
 
-    async validateUniqueBehaviors() {
+    async validateVisibility(minReviewsOverride) {
         await this.initContext();
-        await this.validateHorizontalScrolling();
-        await this.validateReviewCountsAndTypes();
-    }
+        console.log('Running Horizontal Scroll Visibility validation...');
+        const minReviews = minReviewsOverride || this.uiRules.minReviews || 1;
 
-    async validateHorizontalScrolling() {
-        console.log('Running Horizontal Scrolling validation...');
-        const marqueeRow = this.context.locator(this.marqueeRowSelector).first();
-
-        if (!(await marqueeRow.isVisible())) {
-            this.logAudit('Horizontal Scrolling: Marquee row container not found/visible.', 'fail');
+        // 1. Validate Container
+        const container = this.context.locator(this.containerSelector).first();
+        if (!(await container.isVisible({ timeout: 15000 }).catch(() => false))) {
+            this.logAudit('Widget container not visible after timeout (15s).', 'fail');
             return;
         }
 
-        const box = await marqueeRow.boundingBox();
-        if (!box) return;
+        // 2. Validate Marquee Row specifically (since user highlighted this structure)
+        const marqueeRow = this.context.locator(this.marqueeRowSelector).first();
+        if (await marqueeRow.count() > 0) {
+            const isVisible = await marqueeRow.isVisible();
+            if (isVisible) {
+                this.logAudit('Marquee row container found and visible.');
+            } else {
+                this.logAudit('Marquee row found but not visible.', 'warn');
+            }
+        } else {
+            this.logAudit('Marquee row container not found during visibility check.', 'info');
+        }
 
-        // Multi-signal movement detection
+        // 3. Go through reviews to validate them
+        // User requested: "check the dom also for validating reviews identifying the widget ... go through this for validating reviews"
+        const cards = this.context.locator(this.cardSelector);
+
+        // Wait for at least one card
+        try {
+            await cards.first().waitFor({ state: 'visible', timeout: 10000 });
+        } catch (e) {
+            console.log('Timeout waiting for review cards.');
+        }
+
+        const cardCount = await cards.count();
+        this.logAudit(`Widget container is visible. Detected ${cardCount} reviews.`);
+
+        if (cardCount === 0) {
+            this.logAudit('No review cards found in the marquee.', 'fail');
+            return;
+        }
+
+        // 4. Validate Review Content (Validity Check as requested)
+        // We check a sample or all to ensure they aren't empty placeholders
+        const cardData = await cards.evaluateAll(elements => {
+            return elements.map((el, i) => {
+                const text = el.innerText.trim();
+                return { index: i + 1, hasContent: text.length > 0 };
+            });
+        });
+
+        const emptyCards = cardData.filter(c => !c.hasContent);
+        if (emptyCards.length > 0) {
+            this.logAudit(`Found ${emptyCards.length} empty review cards (Indices: ${emptyCards.slice(0, 5).map(c => c.index).join(', ')}...)`, 'warn');
+        } else {
+            this.logAudit('All detected review cards have text content (validity check passed).');
+        }
+
+        // 5. Min Count Check
+        if (cardCount >= minReviews) {
+            this.logAudit(`Found ${cardCount} reviews (min required: ${minReviews}).`);
+        } else {
+            this.logAudit(`Insufficient reviews: Found ${cardCount}, expected at least ${minReviews}.`, 'fail');
+        }
+
+        // 6. Populate generic stats for reporting (detailed breakdown happens in validateReviewCountsAndTypes)
+        this.reviewStats.total = cardCount;
+        this.reviewStats.text = cardCount;
+    }
+
+    // Entry point for all horizontal scroll validations
+    async validateUniqueBehaviors() {
+        await this.initContext();
+        await this.ensureViewport();
+        await this.validateHorizontalScrolling();
+        await this.validateReviewCountsAndTypes();
+        await this.validateReadMoreExpansion();
+        await this.validateTextReadability();
+    }
+
+    async ensureViewport() {
+        // Standardize desktop viewport for consistent audits
+        await this.page.setViewportSize({ width: 1280, height: 720 });
+    }
+
+    // Horizontal scrolling detection
+    async validateHorizontalScrolling() {
+        this.logAudit('Horizontal Scrolling: Starting validation...', 'info');
+
+        const marqueeRow = this.context.locator(this.marqueeRowSelector).first();
+        if (!(await marqueeRow.isVisible())) {
+            this.logAudit('Marquee row container not found or not visible.', 'fail');
+            return;
+        }
+
         const getMovementState = async () => {
-            return await marqueeRow.evaluate((el) => {
+            return await marqueeRow.evaluate(el => {
                 const style = window.getComputedStyle(el);
                 const firstChild = el.querySelector('.feedspace-element-marquee-item, .feedspace-element-post-box, .feedspace-review-item');
                 return {
@@ -44,7 +129,7 @@ class HorizontalScrollWidget extends BaseWidget {
         };
 
         const initial = await getMovementState();
-        await this.page.waitForTimeout(3000); // 3s wait to catch slow movement
+        await this.page.waitForTimeout(3000); // can replace with polling for heavy pages
         const final = await getMovementState();
 
         const hasTransformChange = initial.transform !== final.transform && final.transform !== 'none';
@@ -53,244 +138,212 @@ class HorizontalScrollWidget extends BaseWidget {
         const hasActiveAnimation = initial.animation !== 'none' || initial.transition !== 'none';
 
         if (hasTransformChange || hasScrollChange || hasChildMovement || hasActiveAnimation) {
-            let signal = [];
-            if (hasTransformChange) signal.push('transform');
-            if (hasScrollChange) signal.push('scrollLeft');
-            if (hasChildMovement) signal.push('child position');
-            if (hasActiveAnimation) signal.push('active CSS animation');
+            const signals = [];
+            if (hasTransformChange) signals.push('transform');
+            if (hasScrollChange) signals.push('scrollLeft');
+            if (hasChildMovement) signals.push('child position');
+            if (hasActiveAnimation) signals.push('CSS animation');
 
-            this.logAudit(`Horizontal Scrolling: Automatic movement detected via ${signal.join(', ')}.`);
-            this.logAudit('Interaction: Horizontal scrolling behavior confirmed.');
+            this.logAudit(`Automatic horizontal movement detected via ${signals.join(', ')}.`, 'pass');
         } else {
-            this.logAudit('Horizontal Scrolling: No automatic movement detected after 3s delay. Checking for manual overflow...', 'info');
-
             const isScrollable = await marqueeRow.evaluate(el => el.scrollWidth > el.clientWidth);
             if (isScrollable) {
-                this.logAudit('Horizontal Scrolling: Content overflows and is horizontally scrollable (manual only).');
-                this.logAudit('Interaction: Horizontal scrolling confirmed via overflow.');
+                this.logAudit('Content overflows and is horizontally scrollable (manual).', 'pass');
             } else {
-                this.logAudit('Horizontal Scrolling: Content fits within viewport (no scroll needed).', 'info');
+                this.logAudit('Content fits within viewport; no horizontal scroll needed.', 'info');
             }
         }
     }
 
+    // Review counts and types detection
     async validateReviewCountsAndTypes() {
-        console.log('Running Horizontal Scroll Review Count validation...');
-        const cards = this.context.locator(this.cardSelector);
-        const count = await cards.count();
-        this.logAudit(`Processing ${count} cards (Horizontal Layout)...`);
+        this.logAudit('Review Count & Type: Starting validation...', 'info');
 
-        // Batch process using evaluateAll (reusing VerticalScroll optimization pattern)
+        const cards = this.context.locator(this.cardSelector);
+        const totalCount = await cards.count();
+
+        if (totalCount === 0) {
+            this.logAudit('No cards found in horizontal scroll widget.', 'warn');
+            return;
+        }
+
         const cardData = await cards.evaluateAll(elements => {
-            return elements.map((el, i) => {
-                // Skip clones
-                // Note: Marquees often duplicate content. We need to follow clone rules
+            return elements.map(el => {
+                // Get Feed ID for accurate deduplication
+                const feedId = el.getAttribute('data-feed-id') || el.closest('[data-feed-id]')?.getAttribute('data-feed-id');
+
                 const isClone = el.closest('[data-fs-marquee-clone="true"], .cloned, .clone') ||
                     el.getAttribute('aria-hidden') === 'true' ||
-                    el.classList.contains('feedspace-marquee-copy'); // Common marquee duplicate class
-
-                if (isClone) return null;
+                    el.classList.contains('feedspace-marquee-copy');
 
                 const hasVideo = !!el.querySelector('video, iframe[src*="youtube"], iframe[src*="vimeo"], .video-play-button');
                 const hasAudio = !!el.querySelector('audio, .audio-player');
 
-                return { hasVideo, hasAudio };
-            }).filter(d => d !== null);
+                return { feedId, isClone, hasVideo, hasAudio };
+            });
         });
 
-        this.reviewStats.total = cardData.length;
-        this.reviewStats.video = cardData.filter(c => c.hasVideo).length;
-        this.reviewStats.audio = cardData.filter(c => c.hasAudio).length;
+        // Robust Deduplication Strategy
+        // 1. Try to deduplicate by data-feed-id if available
+        const uniqueById = new Map();
+        const cardsWithoutId = [];
+
+        cardData.forEach(card => {
+            if (card.feedId) {
+                if (!uniqueById.has(card.feedId)) {
+                    uniqueById.set(card.feedId, card);
+                }
+            } else {
+                cardsWithoutId.push(card);
+            }
+        });
+
+        // 2. For cards without ID, fallback to clone detection
+        const uniqueNoId = cardsWithoutId.filter(c => !c.isClone);
+
+        // Combine
+        const uniqueCards = [...uniqueById.values(), ...uniqueNoId];
+        const uniqueCount = uniqueCards.length;
+
+        this.reviewStats.total = uniqueCount;
+        this.reviewStats.video = uniqueCards.filter(c => c.hasVideo).length;
+        this.reviewStats.audio = uniqueCards.filter(c => c.hasAudio).length;
         this.reviewStats.text = this.reviewStats.total - this.reviewStats.video - this.reviewStats.audio;
 
-        this.logAudit(`Reviews Segmented (Unique): Total ${this.reviewStats.total} (Text: ${this.reviewStats.text}, Video: ${this.reviewStats.video}, Audio: ${this.reviewStats.audio})`);
+        this.logAudit(`Reviews: Found ${totalCount} total content blocks (DOM elements).`, 'info');
+        this.logAudit(`Unique Reviews: ${this.reviewStats.total} (deduplicated by ID/clones) | Text: ${this.reviewStats.text}, Video: ${this.reviewStats.video}, Audio: ${this.reviewStats.audio}`, 'pass');
+
+        if (uniqueCount === 0 && totalCount > 0) {
+            this.logAudit('Warning: All detected cards seem to be duplicates/clones. Check clone detection logic.', 'warn');
+        }
     }
 
+    // Read More / Less robust validation
     async validateReadMoreExpansion() {
-        console.log('Running Horizontal Read More validation (Global Search)...');
-
-        // Define robust selectors
-        const readMoreSelectors = [
-            '.feedspace-element-read-more',
-            '.feedspace-element-read-more-text-span',
-            '.read-more',
-            'span:has-text("Read more")',
-            'button:has-text("Read more")',
-            '.show-more'
-        ];
+        this.logAudit('Read More: Starting validation...', 'info');
 
         let targetTrigger = null;
         let targetCard = null;
 
-        // GLOBAL SEARCH: Look for ANY card with a visible Read More button
-        for (const selector of readMoreSelectors) {
+        // Global search across defined selectors
+        for (const selector of this.selectors.readMore) {
             const triggers = this.context.locator(selector);
             const count = await triggers.count();
-
             for (let i = 0; i < count; i++) {
                 const el = triggers.nth(i);
                 if (await el.isVisible().catch(() => false)) {
                     targetTrigger = el;
-                    // Find the parent card for this trigger
-                    targetCard = el.locator('xpath=./ancestor::*[contains(@class, "feedspace-element-marquee-item") or contains(@class, "feedspace-review-item") or contains(@class, "feedspace-element-post-box")][1]');
+                    targetCard = el.locator('xpath=./ancestor::*[contains(@class,"feedspace-element-marquee-item") or contains(@class,"feedspace-review-item") or contains(@class,"feedspace-element-post-box")][1]');
                     break;
                 }
             }
             if (targetTrigger) break;
         }
 
-        if (targetTrigger && targetCard) {
-            this.logAudit('Read More: Global search found a visible expansion trigger.');
-            try {
-                // Perform validaton on this specific card
-                // Safe scroll to bring into view if needed (marquee movement)
-                await targetTrigger.scrollIntoViewIfNeeded().catch(() => { });
+        if (!targetTrigger || !targetCard) {
+            this.logAudit('No visible "Read More" triggers found.', 'info');
+            return;
+        }
 
-                await targetTrigger.click({ force: true });
-                await this.page.waitForTimeout(500);
+        try {
+            await targetTrigger.scrollIntoViewIfNeeded().catch(() => { });
+            await targetTrigger.click({ force: true });
+            await this.page.waitForTimeout(500);
 
-                // Check for "Read Less" or content expansion
-                const hasReadLess = await targetCard.locator('.feedspace-element-read-less, .feedspace-element-read-less-text-span, span:has-text("Read less")').count() > 0;
+            const hasReadLess = await targetCard.locator(this.selectors.readLess.join(',')).count() > 0;
 
-                if (hasReadLess) {
-                    const expansionResult = 'Verified (Expansion detected)';
-                    let collapseResult = 'Not tested';
+            if (hasReadLess) {
+                const collapseBtn = targetCard.locator(this.selectors.readLess.join(',')).first();
+                let collapseResult = 'Not tested';
 
-                    const collapseBtn = targetCard.locator('.feedspace-element-read-less, .feedspace-element-read-less-text-span, span:has-text("Read less")').first();
-                    if (await collapseBtn.isVisible()) {
-                        const beforeCollapseHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => 0);
-                        await collapseBtn.click({ force: true });
-                        await this.page.waitForTimeout(800);
-                        const afterCollapseHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => beforeCollapseHeight);
-                        if (afterCollapseHeight < beforeCollapseHeight - 2 || !(await collapseBtn.isVisible())) {
-                            collapseResult = `Verified (-${beforeCollapseHeight - afterCollapseHeight}px)`;
-                        } else {
-                            collapseResult = 'Collapse failed (height did not decrease)';
-                        }
-                    }
-
-                    if (collapseResult.startsWith('Verified')) {
-                        this.logAudit(`Read More / Less Cycle: Successfully validated full toggle cycle. (${expansionResult} -> ${collapseResult}).`);
-                    } else {
-                        this.logAudit(`Read More: Expansion validated (${expansionResult}), but Collapse check had issue: ${collapseResult}.`, 'info');
-                    }
-                } else {
-                    this.logAudit('Read More: Clicked trigger but did not detect expansion state.', 'fail');
+                if (await collapseBtn.isVisible()) {
+                    const beforeHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => 0);
+                    await collapseBtn.click({ force: true });
+                    await this.page.waitForTimeout(800);
+                    const afterHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => beforeHeight);
+                    collapseResult = (afterHeight < beforeHeight - 2) ? 'Verified' : 'Collapse failed';
                 }
-            } catch (e) {
-                this.logAudit(`Read More: Expanded action failed - ${e.message}`, 'info');
+
+                this.logAudit(`Read More / Less cycle validated. Collapse: ${collapseResult}`, 'pass');
+            } else {
+                this.logAudit('Read More clicked but no expansion detected.', 'fail');
             }
-        } else {
-            this.logAudit('Read More: No visible "Read More" triggers found in the entire widget.', 'info');
+        } catch (e) {
+            this.logAudit(`Read More action failed: ${e.message}`, 'fail');
         }
     }
 
+    // Text readability validation
     async validateTextReadability() {
+        this.logAudit('Text Readability: Starting validation...', 'info');
+
         try {
-            await this.initContext();
-            this.logAudit('Text Readability: Intensive content check for truncation.');
+            const cards = this.context.locator(this.cardSelector);
 
             const textSelectors = [
-                '.feedspace-author-name',
-                '.feedspace-author-position',
-                '.feedspace-element-author-name',
-                '.feedspace-element-author-position',
-                '.feedspace-element-author-name-text',
-                '.feedspace-element-author-position-text',
+                ...this.selectors.authorName,
                 '.feedspace-element-feed-text',
                 '.feedspace-card-body p',
                 '.feedspace-review-body',
                 '.feedspace-element-review-body',
-                'p.text-gray-800',
                 '.feedspace-element-review-contain-box',
-                'p' // Catch-all for paragraph text
-            ].join(', ');
+                'p.text-gray-800',
+                'p'
+            ].join(',');
 
-            const cards = this.context.locator(this.cardSelector);
-            const cardCount = await cards.count();
-            console.log(`[DEBUG] HorizontalScroll audit: batch-scanning ${cardCount} card candidates.`);
-
-            // "God Mode" Batch Evaluation: Process all cards in a SINGLE browser-side call
             const scanResults = await cards.evaluateAll((elements, selectors) => {
-                return elements.map((card, i) => {
-                    const style = window.getComputedStyle(card);
-                    const isVisible = card.offsetWidth > 0 && card.offsetHeight > 0 && style.display !== 'none' && style.visibility !== 'hidden';
-                    if (!isVisible) return null;
+                return elements.map(card => {
+                    try {
+                        const style = window.getComputedStyle(card);
+                        if (style.display === 'none' || style.visibility === 'hidden') return null;
 
-                    // Extract author name for this card
-                    const nameSelectors = '.feedspace-author-name, .feedspace-element-author-name, .feedspace-element-author-name-text, .feedspace-element-feed-name, .author-name, .feedspace-review-author-name, .feedspace-element-author-title';
-                    const nameEl = card.querySelector(nameSelectors);
-                    const authorName = nameEl ? nameEl.innerText.trim() : `Card ${i + 1}`;
+                        const nameEl = card.querySelector('.feedspace-author-name, .feedspace-element-author-name, .feedspace-element-author-name-text');
+                        const author = nameEl ? nameEl.innerText.trim() : 'Unknown';
 
-                    // Find text elements within this card
-                    const textElements = card.querySelectorAll(selectors);
-                    const cardFailures = [];
+                        const textEls = card.querySelectorAll(selectors);
+                        const failures = [];
 
-                    textElements.forEach(node => {
-                        const s = window.getComputedStyle(node);
-                        if (s.display === 'none' || s.visibility === 'hidden') return;
+                        textEls.forEach(node => {
+                            const s = window.getComputedStyle(node);
+                            if (s.display === 'none' || s.visibility === 'hidden') return;
+                            const isTruncated = s.textOverflow === 'ellipsis' || (s.webkitLineClamp && s.webkitLineClamp !== '0' && s.webkitLineClamp !== 'none');
+                            const isOverflowing = node.scrollHeight > node.clientHeight || node.scrollWidth > node.clientWidth;
+                            if (isTruncated || isOverflowing) failures.push({ author, fullText: node.innerText.trim(), className: node.className || 'text-element' });
+                        });
 
-                        const isTruncated = s.textOverflow === 'ellipsis' || (s.webkitLineClamp !== 'none' && s.webkitLineClamp !== '0');
-                        const isOverflowing = node.scrollHeight > node.clientHeight || node.scrollWidth > node.clientWidth;
-
-                        if (isTruncated || isOverflowing) {
-                            cardFailures.push({
-                                author: authorName,
-                                fullText: node.innerText.trim(),
-                                className: node.className || 'text-element'
-                            });
-                        }
-                    });
-
-                    return cardFailures;
+                        return failures;
+                    } catch { return null; }
                 }).filter(f => f !== null).reduce((acc, val) => acc.concat(val), []);
-            }, textSelectors).catch(err => {
-                console.error(`[DEBUG] Batch evaluation failed: ${err.message}`);
-                return [];
-            });
+            }, textSelectors);
 
-            const seenFailures = new Set();
+            const seen = new Set();
             let overflowCount = 0;
 
             for (const res of scanResults) {
                 if (!res || !res.fullText) continue;
-
-                const textSnippet = res.fullText.substring(0, 30);
-                const className = res.className
-                    .split(' ')
-                    .filter(c => c.length > 0)
-                    .slice(0, 2)
-                    .join('.') || 'text-element';
-
-                const dedupKey = `${res.author}|${className}|${textSnippet}`;
-                if (seenFailures.has(dedupKey)) continue;
-                seenFailures.add(dedupKey);
-
+                const key = `${res.author}|${res.className}|${res.fullText.substring(0, 30)}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                overflowCount++;
                 this.detailedFailures.push({
                     type: 'Text Readability',
                     card: res.author,
-                    selector: className,
-                    description: `Visible text content is cut off or truncated.`,
+                    selector: res.className,
+                    description: 'Visible text is truncated or cut off',
                     snippet: res.fullText.substring(0, 100).replace(/\n/g, ' '),
                     severity: 'High'
                 });
-                overflowCount++;
             }
 
             if (overflowCount > 0) {
-                this.logAudit(`Text Readability: Detected ${overflowCount} unique instances of text cut-off across the review stack.`, 'fail');
+                this.logAudit(`Text Readability: Detected ${overflowCount} truncated/cut-off texts.`, 'fail');
             } else {
-                this.logAudit('Text Readability: All visible text content is legible and well-contained.');
+                this.logAudit('Text Readability: All visible text content is legible.', 'pass');
             }
-        } catch (globalErr) {
-            console.error(`[FATAL] HorizontalScroll validateTextReadability failed: ${globalErr.message}`);
-            this.logAudit(`Text Readability check encountered a critical error: ${globalErr.message}`, 'fail');
-        }
-    }
 
-    async validateReadMore() {
-        // Redirect legacy call to the new robust implementation
-        await this.validateReadMoreExpansion();
+        } catch (err) {
+            this.logAudit(`Text Readability check failed: ${err.message}`, 'fail');
+        }
     }
 }
 

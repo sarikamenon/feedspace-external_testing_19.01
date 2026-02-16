@@ -43,19 +43,6 @@ class AvatarSliderValidator {
             // 5️⃣ Accessibility
             await this.widget.runAccessibilityAudit();
 
-            // Include review stats from widget
-            this.reportData.reviewStats = this.widget.reviewStats || {};
-
-            // Merge widget's internal audit logs into the main report
-            if (this.widget.auditLog && this.widget.auditLog.length > 0) {
-                const mappedLogs = this.widget.auditLog.map(log => ({
-                    message: log.message,
-                    status: log.type || (log.status ? log.status : 'info'),
-                    isLimitation: log.isLimitation || false
-                }));
-                this.reportData.auditLog.push(...mappedLogs);
-            }
-
             this.logAudit('Avatar Slider audit complete.');
         } catch (e) {
             this.logAudit(`Audit failed due to exception: ${e.message}`, 'fail');
@@ -77,19 +64,19 @@ class AvatarSliderValidator {
                 let locator;
                 switch (key) {
                     case 'is_show_ratings':
-                        locator = this.widget.context.locator('.feedspace-video-review-header-star, .feedspace-stars, .star-rating');
+                        locator = this.widget.context.locator('.feedspace-stars, .star-rating');
                         break;
                     case 'show_full_review':
-                        locator = this.widget.context.locator('.feedspace-element-read-more, .read-more, button:has-text("Read more")');
+                        locator = this.widget.context.locator('.feedspace-element-read-more, .read-more');
                         break;
                     case 'allow_to_display_feed_date':
-                        locator = this.widget.context.locator('.feedspace-element-date, .feedspace-wol-date');
+                        locator = this.widget.context.locator('.feedspace-element-date');
                         break;
                     case 'allow_social_redirection':
-                        locator = this.widget.context.locator('.social-redirection-button, .feedspace-element-header-icon > a > img');
+                        locator = this.widget.context.locator('.social-redirection-button');
                         break;
                     case 'cta_enabled':
-                        locator = this.widget.context.locator('.feedspace-cta-button-container-d9, .feedspace-cta-content');
+                        locator = this.widget.context.locator('.feedspace-cta-content');
                         break;
                     case 'hideBranding':
                     case 'allow_to_remove_branding':
@@ -102,18 +89,6 @@ class AvatarSliderValidator {
 
                 if (locator) {
                     uiValue = await locator.first().isVisible().catch(() => false) ? "1" : "0";
-                    // Invert UI value for 'hideBranding' logic if needed, but usually we check presence
-                    // For hideBranding: API=1 means HIDDEN. UI=0 means HIDDEN (not visible).
-                    // So API(1) == UI(0) is actually a PASS for this logic? 
-                    // Let's keep it simple: Compare API value to UI presence for now, flagging discrepancies.
-                    // Special case for branding:
-                    if (key === 'hideBranding' || key === 'allow_to_remove_branding') {
-                        // If API is 1 (Hidden), UI should be 0 (Not Visible).
-                        // If API is 0 (Shown), UI should be 1 (Visible).
-                        // Current logic below expects exact string match. 
-                        // Let's adjust for this specific inverse logic or just report as is.
-                        // For now, let's leave it as direct comparison but note status carefully.
-                    }
                 }
             } catch (e) {
                 uiValue = 'error';

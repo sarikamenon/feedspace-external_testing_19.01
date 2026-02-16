@@ -6,7 +6,7 @@ class AvatarSliderWidget extends BaseWidget {
         super(page, config);
         this.containerSelector = '.feedspace-single-review-widget.feedspace-show-left-right-shadow';
         this.sliderTrackSelector = '.feedspace-slider-track';
-        this.cardSelector = '.feedspace-review-box';
+        this.cardSelector = '.feedspace-review-box, .feedspace-items-slider-items, [data-feed-id]';
         this.nextButton = '.feedspace-items-slider-next';
         this.prevButton = '.feedspace-items-slider-prev';
         this.navWrapper = '.feedspace-navigation-wrp';
@@ -34,6 +34,7 @@ class AvatarSliderWidget extends BaseWidget {
         await this.validateTextReadability();
         await this.validateLayoutIntegrity();
         await this.validateDateConsistency();
+        await this.validateReadMore();
 
         // 3. Media Classification & Counts (Scenarios 11-24)
         await this.validateMediaAndCounts();
@@ -42,6 +43,10 @@ class AvatarSliderWidget extends BaseWidget {
         // 4. Branding & CTA (Requirement 4)
         await this.validateBranding();
         this.logAudit('Inline CTA: Not applicable for Avatar Slider.', 'info');
+
+        // 5. Social Redirection validation
+        await this.validateSocialRedirection();
+
         this.logAudit('Interaction: User can navigate and play media.');
     }
 
@@ -203,13 +208,18 @@ class AvatarSliderWidget extends BaseWidget {
 
             // Performance Optimization: Batch process all reviews in the DOM at once
             // This is much faster than clicking "Next" 292 times
-            const allReviews = this.context.locator(this.cardSelector);
+            // Strategy: Specifically look inside the track for reviews to avoid finding clones outside it
+            const track = this.context.locator(this.sliderTrackSelector);
+            const allReviews = track.locator(this.cardSelector);
             const initialCount = await allReviews.count();
 
-            this.logAudit(`Initial scan detected ${initialCount} reviews in DOM. Processing...`);
+            this.logAudit(`Initial scan detected ${initialCount} review elements in the slider track. Processing...`);
 
             const cardData = await allReviews.evaluateAll(elements => {
                 return elements.map(el => {
+                    // Filter out elements that aren't actually review cards (e.g. wrapper divs)
+                    if (el.classList.contains('feedspace-slider-track')) return null;
+
                     const id = el.getAttribute('data-feed-id') || el.getAttribute('data-id') || el.id;
                     if (!id) return null;
 
@@ -452,6 +462,7 @@ class AvatarSliderWidget extends BaseWidget {
         const readMoreSelectors = [
             'i:has-text("Read More")',
             'button:has-text("Read More")',
+            '.read-more',
             '.feedspace-read-more-btn',
             '.feedspace-element-read-more'
         ];
@@ -475,35 +486,46 @@ class AvatarSliderWidget extends BaseWidget {
 
                 if (targetTrigger) {
                     const initialHeight = await activeSlide.evaluate(el => el.offsetHeight).catch(() => 0);
+                    this.logAudit(`[Read More] Found trigger on active review ${i + 1}. Initial height: ${initialHeight}px. Clicking...`);
                     try {
+                        await targetTrigger.scrollIntoViewIfNeeded().catch(() => { });
                         await targetTrigger.click({ force: true });
-                        await this.page.waitForTimeout(1000);
+                        await this.page.waitForTimeout(1500);
 
                         const currentHeight = await activeSlide.evaluate(el => el.offsetHeight).catch(() => 0);
                         const hasReadLess = await activeSlide.locator(expandedSelector).first().isVisible().catch(() => false);
 
                         if (hasReadLess || currentHeight > initialHeight + 2) {
-                            this.logAudit(`[Read More] Expansion validated on active review ${i + 1}. State: ${hasReadLess ? 'Read Less Visible' : 'Height Increased'}`);
+                            this.logAudit(`[Read More] Expansion validated on active review ${i + 1}. New height: ${currentHeight}px. State: ${hasReadLess ? 'Read Less Visible' : 'Height Increased'}`);
 
                             // Validate Collapse
                             const collapseBtn = activeSlide.locator(expandedSelector).first();
                             if (await collapseBtn.isVisible()) {
+                                this.logAudit('[Read More] Read Less: Clicking to verify collapse...', 'info');
                                 await collapseBtn.click({ force: true });
-                                await this.page.waitForTimeout(800);
-                                this.logAudit('[Read More] Read Less: Collapse cycle verified.');
+                                await this.page.waitForTimeout(1200);
+
+                                const finalHeight = await activeSlide.evaluate(el => el.offsetHeight).catch(() => 0);
+                                if (finalHeight < currentHeight || !(await collapseBtn.isVisible())) {
+                                    this.logAudit('[Read More] Read More / Less: Full cycle (Expand -> Collapse) validated successfully.');
+                                } else {
+                                    this.logAudit('[Read More] Read Less: Card did not collapse properly.', 'fail');
+                                }
                             }
                             readMoreVerified = true;
                             break;
+                        } else {
+                            this.logAudit(`[Read More] Expansion failed. Height remained ${currentHeight}px.`, 'info');
                         }
                     } catch (e) {
-                        console.log(`Read More attempt failed: ${e.message}`);
+                        this.logAudit(`[Read More] Interaction failed - ${e.message.split('\n')[0]}`, 'info');
                     }
                 }
             }
 
             if (await nextBtn.isVisible()) {
                 await nextBtn.click({ force: true });
-                await this.page.waitForTimeout(1000);
+                await this.page.waitForTimeout(1200);
             } else {
                 break;
             }
@@ -511,6 +533,15 @@ class AvatarSliderWidget extends BaseWidget {
 
         if (!readMoreVerified) {
             this.logAudit('[Read More] No expansion triggers found on active slides. (N/A)', 'info');
+        }
+    }
+
+    async validateSocialRedirection() {
+        const icon = this.context.locator('.social-redirection-button, .feedspace-element-header-icon > a > img').first();
+        if (await icon.isVisible()) {
+            this.logAudit('Social Redirection: Icon found.');
+        } else {
+            this.logAudit('Social Redirection: Icon not found.', 'info');
         }
     }
 }

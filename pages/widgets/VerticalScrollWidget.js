@@ -5,102 +5,38 @@ class VerticalScrollWidget extends BaseWidget {
     constructor(page, config) {
         super(page, config);
         // Update selectors based on widget specifications
-        this.containerSelector = '.feedspace-element-container .feedspace-element-feed-top-bottom-marquee, .feedspace-top-bottom-shadow, .feedspace-element-container';
-        this.subContainerSelector = '.feedspace-element-feed-box-wrap.feedspace-element-grid.feedspace-element-col-three';
+        this.containerSelector = '.feedspace-element-container.feedspace-element-feed-top-bottom-marquee, .feedspace-top-bottom-shadow, .feedspace-element-container';
+        this.subContainerSelector = '.feedspace-element-feed-box-wrap.feedspace-element-grid';
         this.reviewRowSelector = '.feedspace-element-marquee-row';
-        this.cardSelector = '.feedspace-review-item, .feedspace-element-feed-box, .feedspace-marquee-box-inner';
-        this.readMoreSelector = '.feedspace-element-read-more';
+        this.columnSelector = '.feedspace-element-marquee-item, [class*="marquee-column"]';
+        this.cardSelector = '.feedspace-review-item, .feedspace-element-feed-box, .feedspace-marquee-box-inner, .feedspace-review-box';
+        this.readMoreSelector = 'i:has-text("Read More"), .feedspace-element-read-more';
         this.readLessSelector = '.feedspace-read-less-btn';
         this.ctaSelector = '.feedspace-element-feed-box-inner .feedspace-inline-cta-card, .feedspace-cta-content';
     }
 
     async validateVisibility(minReviewsOverride) {
-        // Override to deduplicate review count from the start
         await this.initContext();
         const minReviews = minReviewsOverride || this.uiRules.minReviews || 1;
         const container = this.context.locator(this.containerSelector).first();
+
         if (!(await container.isVisible({ timeout: 15000 }).catch(() => false))) {
             this.logAudit('Widget container not visible after timeout (15s).', 'fail');
             return;
         }
         this.logAudit('Widget container is visible.');
 
-        const cards = this.context.locator(this.cardSelector);
+        // Column Detection
+        const columns = this.context.locator(this.columnSelector);
+        const colCount = await columns.count();
+        this.logAudit(`Detected ${colCount} marquee columns in the widget.`);
 
-        // Wait for at least one card to appear or timeout gracefully
-        try {
-            await cards.first().waitFor({ state: 'visible', timeout: 10000 });
-        } catch (e) {
-            console.log('Timeout waiting for review cards to become visible.');
-        }
+        const allCards = this.context.locator(this.cardSelector);
+        const totalRawCards = await allCards.count();
+        this.logAudit(`Scanning ${totalRawCards} raw cards across all columns for unique content...`);
 
-        const cardCount = await cards.count();
-        this.logAudit(`Processing ${cardCount} potential cards for unique reviews...`);
-
-        // Performance Optimization: Batch process all cards in one evaluate call
-        const cardData = await cards.evaluateAll((elements) => {
-            return elements.map(el => {
-                // 1. Skip Clones and Hidden Elements early to save memory/time
-                const isClone = el.closest('[data-fs-marquee-clone="true"], .cloned, .clone');
-                const isHidden = el.getAttribute('aria-hidden') === 'true';
-                if (isClone || isHidden) return null;
-
-                // 2. Check if CTA
-                const isCTA = el.classList.contains('feedspace-inline-cta-card') ||
-                    !!el.closest('.feedspace-inline-cta-card') ||
-                    !!el.querySelector('.feedspace-inline-cta-card');
-
-                if (isCTA) return { isCTA: true };
-
-                // 3. Get Unique Identifier
-                const feedId = el.getAttribute('data-feed-id') || el.getAttribute('data-id') || el.id;
-
-                // 4. Get Preview Text (for fallback ID)
-                let preview = '';
-                if (!feedId) {
-                    const textEl = el.querySelector('.feedspace-element-feed-text, .review-text, p');
-                    preview = textEl ? textEl.textContent.trim().substring(0, 50) : '';
-                }
-
-                // 5. Detect Media Types
-                const hasVideo = !!el.querySelector('video, iframe[src*="youtube"], iframe[src*="vimeo"], .video-play-button, .feedspace-element-play-feed:not(.feedspace-element-audio-feed-box)');
-                const hasAudio = !!el.querySelector('audio, .audio-player, .fa-volume-up, .feedspace-audio-player, .feedspace-element-audio-feed-box');
-
-                return {
-                    isCTA: false,
-                    id: feedId || preview,
-                    hasVideo,
-                    hasAudio
-                };
-            });
-        });
-
-        // Deduplicate and count based on the batched data
-        const uniqueReviews = new Set();
-        this.reviewStats.text = 0;
-        this.reviewStats.video = 0;
-        this.reviewStats.audio = 0;
-
-        for (const data of cardData) {
-            if (!data || data.isCTA || !data.id) continue;
-            if (uniqueReviews.has(data.id)) continue;
-
-            uniqueReviews.add(data.id);
-            if (data.hasVideo) this.reviewStats.video++;
-            else if (data.hasAudio) this.reviewStats.audio++;
-            else this.reviewStats.text++;
-        }
-
-        const uniqueCount = uniqueReviews.size;
-        this.reviewStats.total = uniqueCount;
-
-        this.logAudit(`Reviews Segmented: Total ${uniqueCount} unique reviews (Text: ${this.reviewStats.text}, Video: ${this.reviewStats.video}, Audio: ${this.reviewStats.audio})`);
-
-        if (uniqueCount >= minReviews) {
-            this.logAudit(`Found ${uniqueCount} unique reviews (min required: ${minReviews}).`);
-        } else {
-            this.logAudit(`Insufficient reviews: Found ${uniqueCount}, expected at least ${minReviews}.`, 'fail');
-        }
+        // Use the common review processor
+        await this.validateReviewCountsAndTypes();
     }
 
     async runValidations() {
@@ -142,6 +78,9 @@ class VerticalScrollWidget extends BaseWidget {
 
         // 7. Responsiveness
         this.logAudit('Responsiveness: Widget adapts to different viewport sizes (tested in mobile view).');
+
+        // 8. Social Redirection validation
+        await this.validateSocialRedirection();
 
         this.logAudit('Vertical Scroll Widget validation complete.');
     }
@@ -334,7 +273,7 @@ class VerticalScrollWidget extends BaseWidget {
                 if (isCTA) continue;
 
                 // Components as defined by user mapping
-                const triggers = card.locator('.feedspace-element-read-more');
+                const triggers = card.locator('i:has-text("Read More"), .feedspace-element-read-more');
                 const content = card.locator('.feedspace-read-more-text').first();
 
                 // Find CURRENT ACTIVE TRIGGER (the visible one)
@@ -390,6 +329,7 @@ class VerticalScrollWidget extends BaseWidget {
                     let secondTrigger = null;
                     // Expanded triggers might use different classes (based on BaseWidget/AvatarGroup)
                     const triggerSelectors = [
+                        'i:has-text("Read Less")',
                         '.feedspace-element-read-more',
                         '.feedspace-element-read-less',
                         '.feedspace-read-less-text-span',
@@ -586,82 +526,85 @@ class VerticalScrollWidget extends BaseWidget {
     }
 
     async validateReviewCountsAndTypes() {
-        console.log('Running Review Count validation...');
+        this.logAudit('Behavior: Validating Review counts and distribution across marquee columns.');
         try {
-            const allCards = this.context.locator(this.cardSelector);
-            const totalCards = await allCards.count();
-            this.logAudit(`Processing ${totalCards} cards for count and type validation...`);
+            const columns = this.context.locator(this.columnSelector);
+            const colCount = await columns.count();
 
-            // Performance Optimization: Batch process all cards in one evaluate call
-            const cardData = await allCards.evaluateAll(elements => {
-                return elements.map((el, i) => {
-                    // 1. Skip clones early
-                    const isClone = el.closest('[data-fs-marquee-clone="true"], .cloned, .clone') ||
-                        el.getAttribute('aria-hidden') === 'true';
-                    if (isClone) return null;
+            const uniqueReviews = new Map(); // ID -> Info
+            const columnStats = [];
 
-                    // 2. Check if CTA
-                    const isCTA = el.classList.contains('feedspace-inline-cta-card') ||
-                        !!el.closest('.feedspace-inline-cta-card') ||
-                        !!el.querySelector('.feedspace-inline-cta-card');
+            for (let i = 0; i < colCount; i++) {
+                const col = columns.nth(i);
+                const cards = col.locator(this.cardSelector);
+                const rawCount = await cards.count();
 
-                    // 3. Get Unique Identifiers
-                    const feedId = el.getAttribute('data-feed-id') || el.getAttribute('data-id') || el.id;
+                const colData = await cards.evaluateAll(elements => {
+                    return elements.map((el, idx) => {
+                        // CLONE FILTERING: Only skip if explicitly marked as a marquee clone
+                        const isClone = el.closest('[data-fs-marquee-clone="true"], .cloned, .clone');
+                        const isHidden = el.getAttribute('aria-hidden') === 'true';
 
-                    // 4. Fallback ID for CTA or Reviews
-                    let fallbackId = '';
-                    if (!feedId) {
-                        const textEl = el.querySelector('.feedspace-element-feed-text, .review-text, p');
-                        fallbackId = (isCTA ? 'CTA-' : '') + (textEl ? textEl.textContent.trim().substring(0, 30) : `Card-${i}`);
+                        // If it's a clone, we skip. 
+                        // But we don't skip aria-hidden for the TOTAL count, as marquees hide items for looping.
+                        if (isClone) return { skipped: true, reason: 'clone' };
+
+                        const isCTA = el.classList.contains('feedspace-inline-cta-card') || !!el.closest('.feedspace-inline-cta-card');
+                        if (isCTA) return { isCTA: true };
+
+                        const feedId = el.getAttribute('data-feed-id') || el.getAttribute('data-id') || el.id;
+                        const text = el.innerText.trim();
+                        // Content hash for fallback deduplication
+                        const contentId = text.substring(0, 100).replace(/\s+/g, '').toLowerCase();
+
+                        const hasVideo = !!el.querySelector('video, iframe, .video-play-button, .feedspace-element-play-feed');
+                        const hasAudio = !!el.querySelector('audio, .audio-player, .feedspace-element-audio-feed-box');
+
+                        return {
+                            id: feedId || contentId,
+                            hasVideo,
+                            hasAudio,
+                            isCTA: false,
+                            isHidden
+                        };
+                    });
+                });
+
+                let colUnique = 0;
+                let colSkipped = 0;
+                for (const d of colData) {
+                    if (!d || d.skipped) {
+                        colSkipped++;
+                        continue;
                     }
+                    if (d.isCTA) continue;
+                    if (!uniqueReviews.has(d.id)) {
+                        uniqueReviews.set(d.id, d);
+                        colUnique++;
+                    }
+                }
+                columnStats.push({ index: i + 1, raw: rawCount, unique: colUnique, skipped: colSkipped });
+            }
 
-                    // 5. Detect Media Types
-                    const hasVideo = !!el.querySelector('video, iframe[src*="youtube"], iframe[src*="vimeo"], .video-play-button, .feedspace-element-play-feed:not(.feedspace-element-audio-feed-box)');
-                    const hasAudio = !!el.querySelector('audio, .audio-player, .fa-volume-up, .feedspace-audio-player, .feedspace-element-audio-feed-box');
+            // Summarize
+            this.reviewStats.text = 0;
+            this.reviewStats.video = 0;
+            this.reviewStats.audio = 0;
 
-                    return {
-                        index: i + 1,
-                        isCTA,
-                        id: feedId || fallbackId,
-                        hasVideo,
-                        hasAudio
-                    };
-                }).filter(d => d !== null);
+            for (const review of uniqueReviews.values()) {
+                if (review.hasVideo) this.reviewStats.video++;
+                else if (review.hasAudio) this.reviewStats.audio++;
+                else this.reviewStats.text++;
+            }
+
+            this.reviewStats.total = uniqueReviews.size;
+
+            columnStats.forEach(stat => {
+                this.logAudit(`Column ${stat.index}: Found ${stat.raw} raw elements (${stat.unique} contributing to unique count).`, 'info');
             });
 
-            // Deduplicate and count
-            const uniqueReviews = new Set();
-            const uniqueCTAs = new Set();
-            let textCount = 0;
-            let videoCount = 0;
-            let audioCount = 0;
-            let ctaCount = 0;
+            this.logAudit(`Final Deduplicated Result: ${this.reviewStats.total} total reviews (Text: ${this.reviewStats.text}, Video: ${this.reviewStats.video}, Audio: ${this.reviewStats.audio})`);
 
-            for (const data of cardData) {
-                if (data.isCTA) {
-                    if (!uniqueCTAs.has(data.id)) {
-                        uniqueCTAs.add(data.id);
-                        ctaCount++;
-                    }
-                    continue;
-                }
-
-                if (!uniqueReviews.has(data.id)) {
-                    uniqueReviews.add(data.id);
-                    if (data.hasVideo) videoCount++;
-                    else if (data.hasAudio) audioCount++;
-                    else textCount++;
-                }
-            }
-
-            const uniqueTotal = uniqueReviews.size;
-
-            if (uniqueTotal > 0) {
-                this.logAudit(`Review Count: ${uniqueTotal} unique reviews (Text: ${textCount}, Video: ${videoCount}, Audio: ${audioCount})`);
-                if (ctaCount > 0) this.logAudit(`CTA Cards: Found ${ctaCount} unique CTA card(s).`);
-            } else {
-                this.logAudit('Review Count: No unique reviews detected in widget.', 'fail');
-            }
         } catch (e) {
             this.logAudit(`Review Count: Validation error - ${e.message}`, 'fail');
         }
@@ -672,6 +615,18 @@ class VerticalScrollWidget extends BaseWidget {
 
         // Test video playback
         const videos = this.context.locator('video').first();
+        const videoPlayBtn = this.context.locator('div.feedspace-video-review-header > div.feedspace-video-review-header-wrap > div.play-btn').first();
+
+        if (await videoPlayBtn.isVisible()) {
+            this.logAudit('[Playback] Video Play Button: Visible. Clicking to verify interaction...');
+            try {
+                await videoPlayBtn.click({ force: true });
+                await this.page.waitForTimeout(2000);
+            } catch (e) {
+                this.logAudit(`[Playback] Video Play Button: Click failed - ${e.message.split('\n')[0]}`, 'info');
+            }
+        }
+
         if (await videos.count() > 0 && await videos.isVisible()) {
             try {
                 const isPlayable = await videos.evaluate(video => {
@@ -690,6 +645,18 @@ class VerticalScrollWidget extends BaseWidget {
 
         // Test audio playback
         const audios = this.context.locator('audio, .feedspace-audio-player').first();
+        const audioPlayBtn = this.context.locator('div.feedspace-element-audio-icon > div.play-btn > span.feedspace-media-play-icon').first();
+
+        if (await audioPlayBtn.isVisible()) {
+            this.logAudit('[Playback] Audio Play Button: Visible. Clicking to verify interaction...');
+            try {
+                await audioPlayBtn.click({ force: true });
+                await this.page.waitForTimeout(2000);
+            } catch (e) {
+                this.logAudit(`[Playback] Audio Play Button: Click failed - ${e.message.split('\n')[0]}`, 'info');
+            }
+        }
+
         if (await audios.count() > 0) {
             try {
                 const hasAudioElement = await audios.evaluate(el => {
@@ -804,6 +771,40 @@ class VerticalScrollWidget extends BaseWidget {
             }
         } catch (e) {
             this.logAudit(`Date Consistency: Validation error - ${e.message}`, 'info');
+        }
+    }
+
+    async validateSocialRedirection() {
+        console.log('Running Vertical Scroll Social Redirection check...');
+        const socialRedirectionSelector = 'div.flex > div.flex > a.feedspace-d6-header-icon, .social-redirection-button, .feedspace-element-header-icon > a > img';
+        const icons = this.context.locator(socialRedirectionSelector);
+        const count = await icons.count();
+
+        if (count > 0) {
+            this.logAudit(`Social Redirection: Found ${count} social redirection elements.`);
+            for (let i = 0; i < count; i++) {
+                const icon = icons.nth(i);
+                if (await icon.isVisible()) {
+                    const tagName = await icon.evaluate(el => el.tagName.toLowerCase());
+                    let hasLink = false;
+                    if (tagName === 'a') {
+                        const href = await icon.getAttribute('href');
+                        if (href && (href.startsWith('http') || href.includes('social'))) hasLink = true;
+                    } else {
+                        const parentLink = icon.locator('xpath=./ancestor::a').first();
+                        if (await parentLink.count() > 0) {
+                            const href = await parentLink.getAttribute('href');
+                            if (href) hasLink = true;
+                        }
+                    }
+
+                    if (!hasLink) {
+                        this.logAudit('Social Redirection: Found icon but no valid redirection link.', 'fail');
+                    }
+                }
+            }
+        } else {
+            this.logAudit('Social Redirection: No social redirection icons found.', 'info');
         }
     }
 }

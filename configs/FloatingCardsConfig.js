@@ -4,10 +4,11 @@ class FloatingCardsConfig {
         this.configJson = configJson || {}; // API JSON
 
         this.locators = {
-            is_show_ratings: page.locator('.feedspace-video-review-header-star, .feedspace-stars, .star-rating'),
-            allow_to_display_feed_date: page.locator('.feedspace-element-date, .feedspace-wol-date'),
-            show_full_review: page.locator('.feedspace-read-more-text, .feedspace-element-read-more, span:has-text("Read more")'),
-            show_platform_icon: page.locator('div.feedspace-element-header-icon > a > img'),
+            is_show_ratings: page.locator(`div.feedspace-element-feed-box-inner > div.feedspace-element-review-box > svg`),
+            allow_to_display_feed_date: page.locator('.feedspace-element-date.feedspace-wol-date'),
+            show_full_review: page.locator('.feedspace-read-less-btn.feedspace-element-read-more.feedspace-element-read-more-open'),
+            show_platform_icon: page.locator(`div.feedspace-element-header-icon > a > img`),
+            cta_enabled: page.locator(`.feedspace-cta-button-container-d13`),
         };
 
         this.auditLog = [];

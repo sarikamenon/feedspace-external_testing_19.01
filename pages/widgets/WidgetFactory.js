@@ -197,17 +197,17 @@ class WidgetFactory {
             let kept = infos;
 
             // If we have mixed frames (Main vs Child) for the same type
-            const hasChild = infos.some(i => i.frame !== page);
-            const hasMain = infos.some(i => i.frame === page);
+            const hasChild = infos.some(i => i.frame !== page.mainFrame());
+            const hasMain = infos.some(i => i.frame === page.mainFrame());
 
             if (hasChild && hasMain) {
                 console.log(`[Factory] Deduplication: Removing Main Frame instance of '${type}' in favor of Child Frame instance(s).`);
-                kept = infos.filter(i => i.frame !== page);
+                kept = infos.filter(i => i.frame !== page.mainFrame());
             }
 
             // Standard unique check
             for (const info of kept) {
-                const key = `${info.type}-${info.frame === page ? 'main' : info.frame.url()}`;
+                const key = `${info.type}-${info.frame === page.mainFrame() ? 'main' : info.frame.url()}`;
                 if (!seen.has(key)) {
                     uniqueDetected.push(info);
                     seen.add(key);
@@ -238,16 +238,40 @@ class WidgetFactory {
 
     static createInstance(type, page, config, frame = null) {
         let instance;
-        switch (type.toLowerCase()) {
-            case 'carousel': instance = new CarouselWidget(page, config); break;
-            case 'masonry': instance = new MasonryWidget(page, config); break;
-            case 'stripslider': instance = new StripSliderWidget(page, config); break;
-            case 'avatargroup': instance = new AvatarGroupWidget(page, config); break;
-            case 'avatarslider': instance = new AvatarSliderWidget(page, config); break;
-            case 'verticalscroll': instance = new VerticalScrollWidget(page, config); break;
-            case 'horizontalscroll': instance = new HorizontalScrollWidget(page, config); break;
-            case 'floatingcards': instance = new FloatingCardsWidget(page, config); break;
-            default: instance = new BaseWidget(page, config);
+        const normalizedType = type.toLowerCase().replace(/_/g, '').replace(/-/g, '');
+        switch (normalizedType) {
+            case 'carousel':
+            case 'carouselslider':
+                instance = new CarouselWidget(page, config);
+                break;
+            case 'masonry':
+                instance = new MasonryWidget(page, config);
+                break;
+            case 'stripslider':
+            case 'marqueestripe':
+                instance = new StripSliderWidget(page, config);
+                break;
+            case 'avatargroup':
+                instance = new AvatarGroupWidget(page, config);
+                break;
+            case 'avatarslider':
+            case 'singleslider':
+                instance = new AvatarSliderWidget(page, config);
+                break;
+            case 'verticalscroll':
+            case 'marqueeupdown':
+                instance = new VerticalScrollWidget(page, config);
+                break;
+            case 'horizontalscroll':
+            case 'marqueeleftright':
+                instance = new HorizontalScrollWidget(page, config);
+                break;
+            case 'floatingcards':
+            case 'floatingtoast':
+                instance = new FloatingCardsWidget(page, config);
+                break;
+            default:
+                instance = new BaseWidget(page, config);
         }
 
         if (frame) {

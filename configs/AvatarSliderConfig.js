@@ -5,9 +5,9 @@ class AvatarSliderConfig {
 
         // Map API JSON keys to locators in the UI (Standardized)
         this.locators = {
-            is_show_ratings: page.locator('.feedspace-video-review-header-star, .feedspace-stars, .star-rating'),
+            is_show_ratings: page.locator('.feedspace-stars, .star-rating, .feedspace-element-rating'),
             allow_to_display_feed_date: page.locator('.feedspace-element-date, .feedspace-wol-date'),
-            show_full_review: page.locator('.feedspace-element-read-more, .feedspace-element-read-more-text-span, .read-more, button:has-text("Read more")'),
+            show_full_review: page.locator('.feedspace-element-read-more, .read-more, button:has-text("Read more")'),
             show_platform_icon: page.locator('div.feedspace-element-header-icon > a > img'),
             cta_enabled: page.locator('.feedspace-cta-button-container-d9, .feedspace-cta-content'),
             allow_social_redirection: page.locator('.social-redirection-button, .feedspace-element-header-icon > a > img'),

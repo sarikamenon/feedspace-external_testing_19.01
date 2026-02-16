@@ -4,10 +4,17 @@ class MasonryConfig {
         this.configJson = configJson || {}; // API JSON
 
         this.locators = {
-            is_show_ratings: page.locator('.feedspace-video-review-header-star, .feedspace-stars'),
+            is_show_ratings: page.locator('.feedspace-video-review-header-star, .feedspace-stars, .star-rating, .feedspace-element-review-box .feedspace-icon, .feedspace-star-fill-color'),
             allow_to_display_feed_date: page.locator('.feedspace-element-date, .feedspace-wol-date'),
             show_full_review: page.locator('.feedspace-element-read-more, .feedspace-element-read-more-text-span, button:has-text("Read more")'),
             show_platform_icon: page.locator('div.feedspace-element-header-icon > a > img'),
+            cta_enabled: page.locator('.feedspace-cta-button-container-d9, .feedspace-cta-content'),
+            allow_social_redirection: page.locator('div.flex > div.flex > a.feedspace-d6-header-icon, .social-redirection-button, .feedspace-element-header-icon > a > img'),
+            hideBranding: page.locator('a[href*="utm_source=powered-by-feedspace"]'),
+            allow_to_remove_branding: page.locator('a[href*="utm_source=powered-by-feedspace"]'),
+            is_show_indicators: page.locator('.feedspace-element-carousel-indicators, .slick-dots'), // In case it's used
+            is_show_arrows_buttons: page.locator('.feedspace-element-carousel-arrow.left, .feedspace-element-carousel-arrow.right'),
+            enable_load_more: page.locator('.load-more-btn, button:has-text("Load More"), span:has-text("Load More")')
         };
 
         this.auditLog = [];

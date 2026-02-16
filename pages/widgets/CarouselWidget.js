@@ -5,6 +5,32 @@ class CarouselWidget extends BaseWidget {
     constructor(page, config) {
         super(page, config);
         this.containerSelector = '.feedspace-carousel-widget, .feedspace-element-container.feedspace-carousel-widget';
+        // Correctly scope card search to the container (handling comma-separated container selectors and dark mode)
+        this.cardSelector = [
+            'div.feedspace-element-carousel-track > div.feedspace-element-feed-box > div.feedspace-element-feed-box-inner',
+            '.feedspace-carousel-widget .feedspace-element-feed-box',
+            '.feedspace-element-container.feedspace-carousel-widget .feedspace-element-feed-box',
+            '.feedspace-element-container.feedspace-carousel-widget.feedspace-element-dark-mode .feedspace-element-feed-box',
+            '.feedspace-carousel-widget .feedspace-review-item',
+            '.feedspace-element-container.feedspace-carousel-widget .feedspace-review-item',
+            '.feedspace-element-container.feedspace-carousel-widget.feedspace-element-dark-mode .feedspace-review-item',
+            '.feedspace-carousel-widget .feedspace-element-post-box',
+            '.feedspace-element-container.feedspace-carousel-widget .feedspace-element-post-box',
+            '.feedspace-element-container.feedspace-carousel-widget.feedspace-element-dark-mode .feedspace-element-post-box',
+            '.feedspace-carousel-widget .swiper-slide',
+            '.feedspace-element-container.feedspace-carousel-widget .swiper-slide',
+            '.feedspace-element-container.feedspace-carousel-widget.feedspace-element-dark-mode .swiper-slide',
+            // Nested variations (container > widget)
+            '.feedspace-element-container .feedspace-carousel-widget .feedspace-element-feed-box',
+            '.feedspace-element-container .feedspace-carousel-widget.feedspace-element-dark-mode .feedspace-element-feed-box',
+            '.feedspace-element-container .feedspace-carousel-widget .feedspace-review-item',
+            '.feedspace-element-container .feedspace-carousel-widget.feedspace-element-dark-mode .feedspace-review-item',
+            '.feedspace-element-container .feedspace-carousel-widget .feedspace-element-post-box',
+            '.feedspace-element-container .feedspace-carousel-widget.feedspace-element-dark-mode .feedspace-element-post-box',
+            '.feedspace-element-container .feedspace-carousel-widget .swiper-slide',
+            '.feedspace-element-container .feedspace-carousel-widget.feedspace-element-dark-mode .swiper-slide'
+        ].join(', ');
+
         this.navContainerSelector = '.feedspace-element-carousel-container';
         this.prevSelector = '.slick-prev, .carousel-control-prev, .prev-btn, .feedspace-element-carousel-arrow.left, button[aria-label="Previous item"]';
         this.nextSelector = '.slick-next, .carousel-control-next, .next-btn, .feedspace-element-carousel-arrow.right, button[aria-label="Next item"]';
@@ -16,6 +42,105 @@ class CarouselWidget extends BaseWidget {
     get nextButton() { return this.context.locator(this.nextSelector); }
     get indicators() { return this.context.locator(this.indicatorsSelector); }
 
+    async validateVisibility(minReviewsOverride) {
+        // 1. Initialize Context
+        await this.initContext();
+        const minReviews = minReviewsOverride || this.config.uiRules?.minReviews || 1;
+
+        console.log(`[Carousel Debug] Validating visibility. Selector length: ${this.cardSelector.length}`);
+
+        // 2. Check Container
+        const container = this.context.locator(this.containerSelector).first();
+        if (!(await container.isVisible({ timeout: 15000 }).catch(() => false))) {
+            this.logAudit('Widget container not visible after timeout (15s).', 'fail');
+            return;
+        }
+
+        // 3. Get Cards & Wait
+        const cards = this.context.locator(this.cardSelector);
+        try {
+            await cards.first().waitFor({ state: 'visible', timeout: 10000 });
+        } catch (e) {
+            console.log('[Carousel Debug] Timeout waiting for cards.');
+        }
+
+        // 4. Deduplication Logic (The Fix)
+        // Fetch identifying attributes in one go
+        const cardData = await cards.evaluateAll(elements => elements.map(el => {
+            // Find data-feed-id on the element or its parent
+            let fId = el.getAttribute('data-feed-id');
+            if (!fId) {
+                const parent = el.closest('[data-feed-id]');
+                if (parent) fId = parent.getAttribute('data-feed-id');
+            }
+
+            return {
+                feedId: fId,
+                class: el.className,
+                hasVideo: !!el.querySelector('video, iframe[src*="youtube"], iframe[src*="vimeo"], .video-play-button, .feedspace-element-play-feed:not(.feedspace-element-audio-feed-box)'),
+                hasAudio: !!el.querySelector('audio, .audio-player, .fa-volume-up, .feedspace-audio-player, .feedspace-element-audio-feed-box')
+            };
+        }));
+
+        const uniqueIndices = [];
+        const seenFeedIds = new Set();
+
+        for (let i = 0; i < cardData.length; i++) {
+            const data = cardData[i];
+
+            // Priority 1: Semantic Clone check (Swiper/Slick usually mark clones)
+            const isClone = data.class.includes('clone') ||
+                data.class.includes('duplicate') ||
+                data.class.includes('slick-cloned') ||
+                data.class.includes('swiper-slide-duplicate');
+
+            if (isClone) continue;
+
+            // Priority 2: Feed ID De-duplication
+            if (data.feedId) {
+                if (!seenFeedIds.has(data.feedId)) {
+                    seenFeedIds.add(data.feedId);
+                    uniqueIndices.push(i);
+                }
+            } else {
+                // If no ID and not a clone, include it
+                uniqueIndices.push(i);
+            }
+        }
+
+        const finalCount = uniqueIndices.length;
+        console.log(`[Carousel Debug] Final unique card count: ${finalCount} (Total found: ${cardData.length})`);
+
+        // 5. Populate Stats based ONLY on Unique Cards
+        this.reviewStats.total = finalCount;
+        this.reviewStats.text = 0;
+        this.reviewStats.video = 0;
+        this.reviewStats.audio = 0;
+
+        for (const index of uniqueIndices) {
+            const data = cardData[index];
+            if (data.hasVideo) this.reviewStats.video++;
+            else if (data.hasAudio) this.reviewStats.audio++;
+            else this.reviewStats.text++;
+        }
+
+        // 6. Log Results
+        this.logAudit(`Widget container is visible. Detected ${finalCount} unique reviews/avatars.`);
+        this.logAudit(`Reviews Segmented: Total ${finalCount} (Text: ${this.reviewStats.text}, Video: ${this.reviewStats.video}, Audio: ${this.reviewStats.audio})`);
+
+        if (finalCount === 0) {
+            console.log('[Carousel Debug] CRITICAL: No cards found. Dumping Container HTML:');
+            const html = await container.evaluate(el => el.innerHTML).catch(e => 'Could not get HTML: ' + e.message);
+            console.log(html.substring(0, 2000));
+        }
+
+        if (finalCount >= minReviews) {
+            this.logAudit(`Found ${finalCount} reviews (min required: ${minReviews}).`);
+        } else {
+            this.logAudit(`Insufficient reviews: Found ${finalCount}, expected at least ${minReviews}.`, 'fail');
+        }
+    }
+
     async validateUniqueBehaviors() {
         await this.initContext();
 
@@ -26,12 +151,16 @@ class CarouselWidget extends BaseWidget {
 
         // 1. Navigation & Swiping
         await this.validateNavigation();
+        await this.validateIndicators();
         await this.simulateSwipe();
 
         // 2. Playback
         await this.validateMediaPlayback();
 
-        this.logAudit('[Interactive] User can navigate, swipe, and play media in carousel.');
+        // 3. Read More
+        await this.validateReadMore();
+
+        this.logAudit('[Interactive] User can navigate, swipe, play media, and expand text in carousel.');
     }
 
     async validateMediaPlayback() {
@@ -61,6 +190,13 @@ class CarouselWidget extends BaseWidget {
             const btn = videoButtons.nth(i);
             if (await btn.isVisible().catch(() => false)) {
                 try {
+                    // Skip if parent card is a clone
+                    const card = btn.locator('xpath=./ancestor::*[contains(@class, "feedspace-element-feed-box") or contains(@class, "swiper-slide")][1]');
+                    const cardClass = await card.getAttribute('class').catch(() => '');
+                    if (cardClass.includes('clone') || cardClass.includes('duplicate') || cardClass.includes('slick-cloned')) {
+                        continue;
+                    }
+
                     await btn.click({ timeout: 3000 });
                 } catch (e) {
                     await btn.evaluate(node => node.click()).catch(() => { });
@@ -96,6 +232,13 @@ class CarouselWidget extends BaseWidget {
             const btn = audioButtons.nth(i);
             if (await btn.isVisible().catch(() => false)) {
                 try {
+                    // Skip if parent card is a clone
+                    const card = btn.locator('xpath=./ancestor::*[contains(@class, "feedspace-element-feed-box") or contains(@class, "swiper-slide")][1]');
+                    const cardClass = await card.getAttribute('class').catch(() => '');
+                    if (cardClass.includes('clone') || cardClass.includes('duplicate') || cardClass.includes('slick-cloned')) {
+                        continue;
+                    }
+
                     await btn.click({ timeout: 3000 });
                 } catch (e) {
                     await btn.evaluate(node => node.click()).catch(() => { });
@@ -150,6 +293,31 @@ class CarouselWidget extends BaseWidget {
         this.logAudit('[Interactive] Swipe gesture simulated.');
     }
 
+    async validateIndicators() {
+        this.logAudit('[Indicators] Checking for carousel indicators and arrows...');
+
+        // Target requested selectors
+        const indicators = this.context.locator('.feedspace-element-carousel-indicators');
+        const leftArrow = this.context.locator('.feedspace-element-carousel-arrow.left');
+        const rightArrow = this.context.locator('.feedspace-element-carousel-arrow.right');
+
+        const hasIndicators = await indicators.isVisible().catch(() => false);
+        const hasLeft = await leftArrow.isVisible().catch(() => false);
+        const hasRight = await rightArrow.isVisible().catch(() => false);
+
+        if (hasIndicators) {
+            this.logAudit('[Indicators] Carousel dot indicators (.feedspace-element-carousel-indicators) found and visible.');
+        } else {
+            this.logAudit('[Indicators] Carousel dot indicators not found or hidden.', 'info');
+        }
+
+        if (hasLeft || hasRight) {
+            this.logAudit(`[Navigation] Arrows found (Left: ${hasLeft}, Right: ${hasRight}).`);
+        } else {
+            this.logAudit('[Navigation] Manual arrow controls (.feedspace-element-carousel-arrow) not found or hidden.', 'info');
+        }
+    }
+
     async validateNavigation() {
         this.logAudit('[Navigation] Checking control visibility...');
         const next = this.context.locator(this.nextSelector);
@@ -193,6 +361,11 @@ class CarouselWidget extends BaseWidget {
             const btn = triggers.nth(i);
             if (await btn.isVisible().catch(() => false)) {
                 const card = btn.locator('xpath=./ancestor::*[contains(@class, "feedspace-element-review-contain-box") or contains(@class, "feedspace-review-box") or contains(@class, "feedspace-element-post-box") or contains(@class, "feedspace-review-item")][1]').first();
+
+                const cardClass = await card.getAttribute('class').catch(() => '');
+                if (cardClass.includes('clone') || cardClass.includes('duplicate') || cardClass.includes('slick-cloned')) {
+                    continue;
+                }
 
                 const initialClasses = await btn.getAttribute('class').catch(() => '');
                 const initialText = await btn.innerText().catch(() => '');

@@ -4,10 +4,14 @@ class StripSliderConfig {
         this.configJson = configJson || {}; // API JSON
 
         this.locators = {
-            is_show_ratings: page.locator('.feedspace-video-review-header-star, .feedspace-stars'),
-            allow_to_display_feed_date: page.locator('.feedspace-element-date, .feedspace-wol-date'),
-            show_full_review: page.locator('.feedspace-element-read-more, .feedspace-element-read-more-text-span, span:has-text("Read More")'),
-            show_platform_icon: page.locator('div.feedspace-element-header-icon > a > img'),
+            is_show_ratings: page.locator('div.feedspace-video-review-header-wrap > div.feedspace-video-review-header-inner > div.feedspace-video-review-header-star, .feedspace-stars'),
+            allow_to_display_feed_date: page.locator('.feedspace-element-date.feedspace-wol-date'),
+            show_full_review: page.locator('span:has-text("Read More")'),
+            show_platform_icon: page.locator('div.feedspace-element-header-icon > a > img, div.feedspace-review-bio-info > div.feedspace-element-header-icon > a'),
+            allow_social_redirection: page.locator('div.feedspace-review-bio-info > div.feedspace-element-header-icon > a, div.feedspace-element-bio-info > div.feedspace-element-bio-top > div.feedspace-element-header-icon'),
+            cta_enabled: page.locator('.feedspace-cta-button-container-d9, .feedspace-cta-content'),
+            hideBranding: page.locator('a[href*="utm_source=powered-by-feedspace"]'),
+            allow_to_remove_branding: page.locator('a[href*="utm_source=powered-by-feedspace"]'),
         };
 
         this.auditLog = [];

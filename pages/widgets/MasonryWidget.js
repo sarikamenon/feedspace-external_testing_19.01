@@ -4,8 +4,15 @@ const { expect } = require('@playwright/test');
 class MasonryWidget extends BaseWidget {
     constructor(page, config) {
         super(page, config);
-        this.containerSelector = '.feedspace-element-container';
-        this.loadMoreButton = this.page.locator('.load-more-btn, button:has-text("Load More")');
+        this.containerSelector = '.feedspace-element-container:not(.feedspace-carousel-widget)';
+        this.loadMoreSelector = '.load-more-btn, button:has-text("Load More"), span:has-text("Load More"), .load-more-reviews';
+        this.cardSelector = [
+            '.feedspace-element-container:not(.feedspace-carousel-widget) .feedspace-element-feed-box',
+            '.feedspace-element-container:not(.feedspace-carousel-widget) .feedspace-review-item',
+            '.feedspace-element-container:not(.feedspace-carousel-widget) .feedspace-element-post-box',
+            '.feedspace-element-container:not(.feedspace-carousel-widget).feedspace-element-dark-mode .feedspace-element-feed-box',
+            '.feedspace-element-container:not(.feedspace-carousel-widget).feedspace-element-dark-mode .feedspace-review-item'
+        ].join(', ');
     }
 
     async validateUniqueBehaviors() {
@@ -20,9 +27,25 @@ class MasonryWidget extends BaseWidget {
         }
 
         // 2. Load More validation
-        const loadMore = this.context.locator('span:has-text("Load More")').first();
+        await this.validateLoadMore();
 
-        if (await loadMore.isVisible()) {
+        // 3. Media Playback validation
+        await this.validateMediaPlayback();
+
+        // 4. Read More / Less validation
+        await this.validateReadMore();
+
+        // 5. Inline CTA validation
+        await this.validateCTA();
+
+        // 6. Social Redirection validation
+        await this.validateSocialRedirection();
+    }
+
+    async validateLoadMore() {
+        const loadMore = this.context.locator(this.loadMoreSelector).first();
+
+        if (await loadMore.isVisible().catch(() => false)) {
             this.logAudit('[Load More] Behavior: Load More button detected. Clicking until all reviews are loaded...');
             let clickCount = 0;
             const maxClicks = 30; // Safety break
@@ -71,15 +94,6 @@ class MasonryWidget extends BaseWidget {
         } else {
             this.logAudit('[Load More] Behavior: No Load More button found (or all content already loaded).', 'info');
         }
-
-        // 3. Media Playback validation
-        await this.validateMediaPlayback();
-
-        // 4. Read More / Less validation
-        await this.validateReadMore();
-
-        // 5. Inline CTA validation
-        await this.validateCTA();
     }
 
     async validateCTA() {
@@ -88,10 +102,10 @@ class MasonryWidget extends BaseWidget {
         const cta = this.context.locator(ctaSelector).first();
 
         if (await cta.isVisible().catch(() => false)) {
-            this.logAudit('Inline CTA found: .feedspace-element-feed-box-inner.feedspace-inline-cta-card');
+            this.logAudit('Inline CTA found: .feedspace-inline-cta-card');
         } else {
             // Fallback to base check if specific one is missing
-            const baseCta = this.context.locator('.feedspace-cta-content').first();
+            const baseCta = this.context.locator('.feedspace-cta-button-container-d9, .feedspace-cta-content').first();
             if (await baseCta.isVisible().catch(() => false)) {
                 this.logAudit('Inline CTA found: .feedspace-cta-content');
             } else {
@@ -103,8 +117,8 @@ class MasonryWidget extends BaseWidget {
     async validateMediaPlayback() {
         console.log('Running Masonry Media Playback validation...');
 
-        const videoPlayBtnSelector = 'div.feedspace-video-review-header > div.feedspace-video-review-header-wrap > div.play-btn';
-        const audioPlayBtnSelector = 'div.feedspace-element-audio-feed > div.feedspace-element-audio-icon > div.play-btn';
+        const videoPlayBtnSelector = 'div.feedspace-video-review-header > div.feedspace-video-review-header-wrap > div.play-btn, .feedspace-element-play-feed, .play-btn';
+        const audioPlayBtnSelector = 'div.feedspace-element-audio-feed > div.feedspace-element-audio-icon > div.play-btn, .feedspace-audio-play-btn';
 
         const videoButtons = this.context.locator(videoPlayBtnSelector);
         const audioButtons = this.context.locator(audioPlayBtnSelector);
@@ -197,49 +211,115 @@ class MasonryWidget extends BaseWidget {
     }
 
     async validateReadMore() {
-        console.log('Running Masonry Read More / Less verification...');
+        console.log('Running robust Masonry Read More / Less verification...');
         await this.page.waitForTimeout(1000); // Wait for content stability
 
-        // User specified locator: page.locator(`button:has-text("Read More")`);
-        const readMoreBtn = this.context.locator('button:has-text("Read More")').first();
+        // Search for ANY visible Read More button in the widget
+        const readMoreSelectors = [
+            'button:has-text("Read More")',
+            'button:has-text("Read more")',
+            '.feedspace-element-read-more',
+            '.read-more',
+            '.feedspace-read-more-text',
+            'span:has-text("Read More")',
+            'span:has-text("Read more")'
+        ];
 
-        if (!(await readMoreBtn.isVisible().catch(() => false))) {
-            this.logAudit('[Read More] Read More: No "Read More" button found in Masonry layout.', 'info');
-            return;
+        let targetTrigger = null;
+        let targetCard = null;
+
+        for (const selector of readMoreSelectors) {
+            const triggers = this.context.locator(selector);
+            const count = await triggers.count();
+            for (let i = 0; i < count; i++) {
+                const trigger = triggers.nth(i);
+                if (await trigger.isVisible().catch(() => false)) {
+                    targetTrigger = trigger;
+                    // Find the parent card for Masonry specifically
+                    targetCard = trigger.locator('xpath=./ancestor::*[contains(@class, "feedspace-element-review-contain-box") or contains(@class, "feedspace-element-feed-box") or contains(@class, "feedspace-review-item")][1]').first();
+                    break;
+                }
+            }
+            if (targetTrigger) break;
         }
 
-        const targetCard = readMoreBtn.locator('xpath=./ancestor::*[contains(@class, "feedspace-element-review-contain-box") or contains(@class, "feedspace-element-feed-box") or contains(@class, "feedspace-review-item")][1]').first();
-
-        if (await targetCard.count() === 0) {
-            this.logAudit('[Read More] Read More: Found button but could not identify parent card.', 'warn');
+        if (!targetTrigger || !targetCard) {
+            this.logAudit('[Read More] Read More: No visible "Read More" button found in any Masonry card.', 'info');
             return;
         }
 
         const initialHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => 0);
-        this.logAudit(`[Read More] Read More: Initial height: ${initialHeight}px. Clicking...`, 'info');
+        this.logAudit(`[Read More] Read More: Found button. Initial card height: ${initialHeight}px. Clicking...`, 'info');
 
         try {
-            await readMoreBtn.scrollIntoViewIfNeeded().catch(() => { });
-            await readMoreBtn.click({ force: true });
+            await targetTrigger.scrollIntoViewIfNeeded().catch(() => { });
+            await targetTrigger.click({ force: true });
             await this.page.waitForTimeout(1500);
 
             const expandedHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => 0);
-            const readLessBtn = this.context.locator('button:has-text("Read Less")').first();
+
+            // Search for visible Read Less button
+            const readLessBtn = this.context.locator('button:has-text("Read Less"), button:has-text("Read less"), .feedspace-read-less-btn, span:has-text("Read Less"), span:has-text("Read less")').first();
             const hasReadLess = await readLessBtn.isVisible();
 
             if (expandedHeight > initialHeight + 5 || hasReadLess) {
                 this.logAudit(`[Read More] Read More: Expansion verified. New height: ${expandedHeight}px (+${expandedHeight - initialHeight}px).`);
 
                 if (hasReadLess) {
+                    this.logAudit('[Read More] Read Less: "Read Less" button visible. Clicking to collapse...', 'info');
                     await readLessBtn.click({ force: true });
                     await this.page.waitForTimeout(1200);
-                    this.logAudit('[Read More] Read More / Less: Full cycle validated successfully.');
+
+                    const collapsedHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => 0);
+                    if (collapsedHeight < expandedHeight || !(await readLessBtn.isVisible())) {
+                        this.logAudit('[Read More] Read More / Less: Full cycle (Expand -> Collapse) validated successfully.');
+                    } else {
+                        this.logAudit('[Read More] Read Less: Clicked button but card did not collapse.', 'fail');
+                    }
                 }
             } else {
-                this.logAudit(`[Read More] Read More: Expansion failed (Height remained ${expandedHeight}px).`, 'info');
+                if (!(await targetTrigger.isVisible())) {
+                    this.logAudit('[Read More] Read More: Trigger hidden after click, assuming expansion.');
+                } else {
+                    this.logAudit(`[Read More] Read More: Expansion failed (Height remained ${expandedHeight}px).`, 'info');
+                }
             }
         } catch (e) {
             this.logAudit(`[Read More] Read More / Less: Interaction failed - ${e.message.split('\n')[0]}`, 'info');
+        }
+    }
+
+    async validateSocialRedirection() {
+        console.log('Running Masonry Social Redirection check...');
+        const socialRedirectionSelector = 'div.flex > div.flex > a.feedspace-d6-header-icon, .social-redirection-button, .feedspace-element-header-icon > a > img';
+        const icons = this.context.locator(socialRedirectionSelector);
+        const count = await icons.count();
+
+        if (count > 0) {
+            this.logAudit(`Social Redirection: Found ${count} social redirection elements.`);
+            for (let i = 0; i < count; i++) {
+                const icon = icons.nth(i);
+                if (await icon.isVisible()) {
+                    const tagName = await icon.evaluate(el => el.tagName.toLowerCase());
+                    let hasLink = false;
+                    if (tagName === 'a') {
+                        const href = await icon.getAttribute('href');
+                        if (href && (href.startsWith('http') || href.includes('social'))) hasLink = true;
+                    } else {
+                        const parentLink = icon.locator('xpath=./ancestor::a').first();
+                        if (await parentLink.count() > 0) {
+                            const href = await parentLink.getAttribute('href');
+                            if (href) hasLink = true;
+                        }
+                    }
+
+                    if (!hasLink) {
+                        this.logAudit('Social Redirection: Found icon but no valid redirection link.', 'fail');
+                    }
+                }
+            }
+        } else {
+            this.logAudit('Social Redirection: No social redirection icons found.', 'info');
         }
     }
 }

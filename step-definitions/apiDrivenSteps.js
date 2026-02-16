@@ -53,7 +53,7 @@ When('I fetch the widget list from the developer API', async function () {
     }
 
     // Network fetch
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: false });
     context = await browser.newContext();
     try {
         const response = await context.request.get(devApiUrl);
@@ -70,9 +70,14 @@ When('I fetch the widget list from the developer API', async function () {
 
 Then('I iterate through each customer URL and perform the following:', { timeout: 600 * 1000 }, async function (dataTable) {
     // Launch browser for validation
-    browser = await chromium.launch({ headless: false });
-    context = await browser.newContext();
+    browser = await chromium.launch({
+        headless: false,
+        args: ['--start-maximized']
+    });
+    context = await browser.newContext({ viewport: null });
     page = await context.newPage();
+    // Standardize viewport immediately to prevent re-renders during audit
+    await page.setViewportSize({ width: 1920, height: 1080 });
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const reportDir = path.resolve(__dirname, '../reports');
@@ -90,14 +95,22 @@ Then('I iterate through each customer URL and perform the following:', { timeout
         console.log(`\n[${++processedCount}/${widgetList.length}] Processing: ${widgetUrl}`);
 
         try {
-            // Step 1: Load Widget URL & Reset Viewport
-            await page.setViewportSize({ width: 1920, height: 1080 }); // Reset to desktop
-            await page.goto(widgetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            // Step 1: Load Widget URL & Wait for content
+            await page.setViewportSize({ width: 1920, height: 1080 }); // Standardize viewport BEFORE navigation
+            await page.goto(widgetUrl, { waitUntil: 'load', timeout: 60000 });
+
+            // Trigger lazy loading by scrolling
+            await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+            await page.waitForTimeout(1000);
+            await page.evaluate(() => window.scrollTo(0, 0));
+
+            // Wait an additional 10 seconds for profile pictures and dynamic elements
+            await page.waitForTimeout(10000);
 
             // Step 2: Determine expected type
             const typeId = entry.type || entry.widget_type;
-            // Normalize type string (e.g., 'avatar_group' -> 'avatargroup')
-            const expectedType = (WidgetTypeConstants[typeId] || (typeof typeId === 'string' ? typeId.replace(/_/g, '') : 'Unknown')).toLowerCase();
+            // Normalize type string consistently with WidgetFactory (remove underscores and hyphens)
+            const expectedType = (WidgetTypeConstants[typeId] || (typeof typeId === 'string' ? typeId : 'Unknown')).toLowerCase().replace(/_/g, '').replace(/-/g, '');
 
             // Step 3: Detect Valid Widgets on Page
             // Passing the full config allows WidgetFactory to match config if needed, though we rely mainly on detection
@@ -185,32 +198,30 @@ Then('I iterate through each customer URL and perform the following:', { timeout
 
 function createValidatorAndConfig(type, page, config) {
     let validator, configChecker;
-    const t = type.toLowerCase();
+    const t = type.toLowerCase().replace(/_/g, '').replace(/-/g, '');
 
     switch (t) {
         case 'avatargroup':
-        case 'avatar_group':
             validator = new AvatarGroupValidator(page, config);
             configChecker = new AvatarGroupConfig(page, config);
             break;
         case 'horizontalscroll':
-        case 'horizontal_scroll':
+        case 'marqueeleftright':
             validator = new HorizontalScrollValidator(page, config);
             configChecker = new HorizontalScrollConfig(page, config);
             break;
         case 'avatarslider':
-        case 'avatar_slider':
+        case 'singleslider':
             validator = new AvatarSliderValidator(page, config);
             configChecker = new AvatarSliderConfig(page, config);
             break;
         case 'carousel':
         case 'carouselslider':
-        case 'carousel_slider':
             validator = new CarouselValidator(page, config);
             configChecker = new CarouselConfig(page, config);
             break;
         case 'floatingcards':
-        case 'floating_cards':
+        case 'floatingtoast':
             validator = new FloatingCardsValidator(page, config);
             configChecker = new FloatingCardsConfig(page, config);
             break;
@@ -219,17 +230,17 @@ function createValidatorAndConfig(type, page, config) {
             configChecker = new MasonryConfig(page, config);
             break;
         case 'stripslider':
-        case 'strip_slider':
+        case 'marqueestripe':
             validator = new StripSliderValidator(page, config);
             configChecker = new StripSliderConfig(page, config);
             break;
         case 'verticalscroll':
-        case 'vertical_scroll':
+        case 'marqueeupdown':
             validator = new VerticalScrollValidator(page, config);
             configChecker = new VerticalScrollConfig(page, config);
             break;
         default:
-            console.warn(`Unknown widget type '${type}', defaulting to HorizontalScroll fallback.`);
+            console.warn(`Unknown widget type '${type}' (normalized: '${t}'), defaulting to HorizontalScroll fallback.`);
             validator = new HorizontalScrollValidator(page, config);
             configChecker = new HorizontalScrollConfig(page, config);
     }
