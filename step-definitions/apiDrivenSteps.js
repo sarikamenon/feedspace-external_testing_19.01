@@ -68,7 +68,7 @@ When('I fetch the widget list from the developer API', async function () {
     }
 });
 
-Then('I iterate through each customer URL and perform the following:', { timeout: 600 * 1000 }, async function (dataTable) {
+Then('I iterate through each customer URL and perform the following:', { timeout: 100 * 60 * 60 * 1000 }, async function (dataTable) {
     // Launch browser for validation
     browser = await chromium.launch({
         headless: false,
@@ -80,170 +80,220 @@ Then('I iterate through each customer URL and perform the following:', { timeout
     await page.setViewportSize({ width: 1920, height: 1080 });
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const reportDir = path.resolve(__dirname, '../reports');
-    if (!fs.existsSync(reportDir)) fs.mkdirSync(reportDir);
-    const reportPathPart = path.join(reportDir, `Api_Driven_Report_${timestamp}`);
+    const baseReportDir = path.resolve(__dirname, '../reports');
+    const dynamicReportDir = path.join(baseReportDir, 'Dynamic_testing_reports');
 
-    console.log(`Starting validation for ${widgetList.length} widgets...`);
+    // Create directories if they don't exist
+    if (!fs.existsSync(baseReportDir)) fs.mkdirSync(baseReportDir);
+    if (!fs.existsSync(dynamicReportDir)) fs.mkdirSync(dynamicReportDir, { recursive: true });
+
+    const groupedByUrl = widgetList.reduce((acc, entry) => {
+        const url = entry.url || entry.widget_url || entry.link;
+        if (!url) return acc;
+        if (!acc[url]) acc[url] = [];
+        acc[url].push(entry);
+        return acc;
+    }, {});
+
+    const uniqueUrls = Object.keys(groupedByUrl);
+    console.log(`Starting massive validation for ${uniqueUrls.length} unique URLs (Total widgets: ${widgetList.length})...`);
+    console.log(`Reports will be saved to: ${dynamicReportDir}`);
 
     let processedCount = 0;
 
-    for (const entry of widgetList) {
-        const widgetUrl = entry.url || entry.widget_url || entry.link;
-        if (!widgetUrl) continue;
+    for (const widgetUrl of uniqueUrls) {
+        const urlEntries = groupedByUrl[widgetUrl];
+        let reports = [];
+        let domain = 'unknown';
+        try { domain = new URL(widgetUrl).hostname.replace('www.', '').replace(/\./g, '_'); } catch (e) { }
+        const fileTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const individualReportBase = path.join(dynamicReportDir, `${domain}_${fileTimestamp}`);
 
-        console.log(`\n[${++processedCount}/${widgetList.length}] Processing: ${widgetUrl}`);
+        console.log(`\n[${++processedCount}/${uniqueUrls.length}] Processing: ${widgetUrl} (${urlEntries.length} expected widgets)`);
 
         try {
+            // Browser Session Recovery: Ensure browser and page are still alive
+            if (!browser || !browser.isConnected() || !page || page.isClosed()) {
+                console.log(`[Recovery] Browser session lost. Re-initializing...`);
+                if (browser) await browser.close().catch(() => { });
+                browser = await chromium.launch({ headless: false, args: ['--start-maximized'] });
+                context = await browser.newContext({ viewport: null });
+                page = await context.newPage();
+            }
+
             // Step 1: Load Widget URL & Wait for content
-            await page.setViewportSize({ width: 1920, height: 1080 }); // Standardize viewport BEFORE navigation
-            await page.goto(widgetUrl, { waitUntil: 'load', timeout: 60000 });
+            // Using a sub-try-catch for navigation to ensure timeout doesn't kill the loop
+            try {
+                await page.setViewportSize({ width: 1920, height: 1080 });
+                await page.goto(widgetUrl, { waitUntil: 'load', timeout: 45000 }); // Slightly shorter timeout for scale
 
-            // Trigger lazy loading by scrolling
-            await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-            await page.waitForTimeout(1000);
-            await page.evaluate(() => window.scrollTo(0, 0));
-
-            // Wait an additional 10 seconds for profile pictures and dynamic elements
-            await page.waitForTimeout(10000);
-
-            // Step 2: Determine expected type
-            const typeId = entry.type || entry.widget_type;
-            // Normalize type string consistently with WidgetFactory (remove underscores and hyphens)
-            const expectedType = (WidgetTypeConstants[typeId] || (typeof typeId === 'string' ? typeId : 'Unknown')).toLowerCase().replace(/_/g, '').replace(/-/g, '');
-
-            // Step 3: Detect Valid Widgets on Page
-            // Passing the full config allows WidgetFactory to match config if needed, though we rely mainly on detection
-            const detectedInstances = await WidgetFactory.detectAndCreate(page, expectedType, { widgets: [entry] });
-
-            if (detectedInstances.length === 0) {
-                console.warn(`[Warning] No widgets of type '${expectedType}' detected on ${widgetUrl}`);
+                // Trigger lazy loading
+                await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+                await page.waitForTimeout(1000);
+                await page.evaluate(() => window.scrollTo(0, 0));
+                await page.waitForTimeout(5000); // Wait for profile pics/dynamic elements
+            } catch (navError) {
+                console.warn(`[Timeout/Nav Error] Could not load ${widgetUrl}: ${navError.message}`);
                 reports.push({
                     url: widgetUrl,
-                    type: expectedType,
                     status: 'Failed',
-                    error: `No widgets detected for type: ${expectedType}`
+                    error: `Navigation/Timeout Error: ${navError.message}`
                 });
-                continue;
+                fs.writeFileSync(`${individualReportBase}.json`, JSON.stringify(reports, null, 2));
+                generateHtmlReport(reports, `${individualReportBase}.html`);
+                continue; // Move to next URL
             }
 
-            console.log(`[Info] Detected ${detectedInstances.length} instance(s) of type '${expectedType}'. Validating each...`);
+            // Step 2 & 3: Iterate through all expected widgets for this URL
+            for (const entry of urlEntries) {
+                const typeId = entry.type || entry.widget_type;
+                const expectedType = (WidgetTypeConstants[typeId] || (typeof typeId === 'string' ? typeId : 'Unknown')).toLowerCase().replace(/_/g, '').replace(/-/g, '');
 
-            // Step 4: Validate EACH detected instance
-            for (let i = 0; i < detectedInstances.length; i++) {
-                const widgetInstance = detectedInstances[i];
-                const instanceId = `Instance ${i + 1}`;
+                console.log(`  - Validating expected widget: ${expectedType}`);
 
-                // Construct config wrapper for this instance
-                const widgetConfigData = {
-                    type: expectedType,
-                    uiRules: {},
-                    ...entry,
-                    ...(entry.configurations || {})
-                };
+                // Detect Valid Widgets on Page for this type
+                const detectedInstances = await WidgetFactory.detectAndCreate(page, expectedType, { widgets: [entry] });
 
-                // Create Validator & Config Checker
-                const { validator, configChecker } = createValidatorAndConfig(expectedType, page, widgetConfigData);
+                if (detectedInstances.length === 0) {
+                    console.warn(`    [Not Found] No '${expectedType}' widgets detected on ${widgetUrl}`);
+                    reports.push({
+                        url: widgetUrl,
+                        type: expectedType,
+                        status: 'Widget Not Found',
+                        error: `Feedspace widget not found for type: ${expectedType}`
+                    });
+                    continue;
+                }
 
-                // Inject the specific widget instance into the validator if possible, 
-                // BUT validator usually creates its own widget new instance.
-                // To support targeting the SPECIFIC detected instance, we'd need to pass the instance's context/selector
-                // to the validator.
-                // Current implementation of Validator classes: new Validator(page, config) -> new Widget(page, config)
-                // We need to inject the *already created* widgetInstance or pass its selector.
+                console.log(`    [Info] Detected ${detectedInstances.length} instance(s) of ${expectedType}. Validating...`);
 
-                // Workaround: Pass the context/selector from the detected instance to the config
-                if (widgetInstance.context) validator.widget.context = widgetInstance.context;
-                if (widgetInstance.containerSelector) validator.widget.containerSelector = widgetInstance.containerSelector;
+                // Step 4: Validate EACH detected instance
+                for (let i = 0; i < detectedInstances.length; i++) {
+                    const widgetInstance = detectedInstances[i];
+                    const instanceId = `Instance ${i + 1}`;
 
-                // Run full audit
-                await validator.runFullAudit();
+                    // RECOVERY: Ensure session is still alive before each instance check
+                    if (!browser || !browser.isConnected() || !page || page.isClosed()) {
+                        console.log(`    [Recovery] Session lost during instance ${i + 1}. Re-loading URL...`);
+                        if (browser) await browser.close().catch(() => { });
+                        browser = await chromium.launch({ headless: false, args: ['--start-maximized'] });
+                        context = await browser.newContext({ viewport: null });
+                        page = await context.newPage();
+                        await page.setViewportSize({ width: 1920, height: 1080 });
+                        await page.goto(widgetUrl, { waitUntil: 'load', timeout: 45000 }).catch(() => { });
+                        await page.waitForTimeout(3000);
+                    }
 
-                // API vs UI Comparison
-                const apiUiReport = await configChecker.generateFeatureReport();
+                    const widgetConfigData = {
+                        type: expectedType,
+                        uiRules: {},
+                        ...entry,
+                        ...(entry.configurations || {})
+                    };
 
-                // Collect Report
-                const widgetReport = {
-                    url: `${widgetUrl} (${instanceId})`, // Distinguish instances in report
-                    type: expectedType,
-                    status: 'Processed',
-                    timestamp: new Date().toISOString(),
-                    auditData: validator.getReportData ? validator.getReportData() : {},
-                    apiUiComparison: apiUiReport
-                };
+                    const { validator, configChecker } = createValidatorAndConfig(expectedType, page, widgetConfigData, widgetInstance.context);
 
-                reports.push(widgetReport);
+                    if (widgetInstance.containerSelector) validator.widget.containerSelector = widgetInstance.containerSelector;
+
+                    // Run audit with internal try-catch
+                    try {
+                        await validator.runFullAudit();
+                        // Use the results already gathered by the validator during its audit
+                        // This avoids re-running checks after modals are closed in interactive widgets
+                        const featureResults = validator.reportData.featureResults || [];
+
+                        reports.push({
+                            url: `${widgetUrl} (${expectedType} ${instanceId})`,
+                            type: expectedType,
+                            status: 'Processed',
+                            timestamp: new Date().toISOString(),
+                            auditData: validator.getReportData ? validator.getReportData() : {},
+                            apiUiComparison: featureResults
+                        });
+                    } catch (auditErr) {
+                        console.error(`    [Audit Error] ${expectedType} Instance ${i + 1} failed: ${auditErr.message}`);
+                        reports.push({
+                            url: `${widgetUrl} (${expectedType} ${instanceId})`,
+                            type: expectedType,
+                            status: 'Failed',
+                            error: `Audit Error: ${auditErr.message}`
+                        });
+                    }
+                }
             }
 
-            // Save incremental report
-            fs.writeFileSync(`${reportPathPart}.json`, JSON.stringify(reports, null, 2));
-
-        } catch (err) {
-            console.error(`[Error] Failed processing ${widgetUrl}:`, err.message);
-            reports.push({
-                url: widgetUrl,
-                status: 'Failed',
-                error: err.message
-            });
-            fs.writeFileSync(`${reportPathPart}.json`, JSON.stringify(reports, null, 2));
+        } finally {
+            // Save consolidated report for all widgets on this URL
+            if (reports.length > 0) {
+                fs.writeFileSync(`${individualReportBase}.json`, JSON.stringify(reports, null, 2));
+                generateHtmlReport(reports, `${individualReportBase}.html`);
+            }
         }
     }
 
-    // Generate final HTML report
-    generateHtmlReport(reports, `${reportPathPart}.html`);
-    console.log(`Validation complete. Reports saved to:\nJSON: ${reportPathPart}.json\nHTML: ${reportPathPart}.html`);
+    console.log(`\n==================================================`);
+    console.log(`Validation complete for ${widgetList.length} URLs.`);
+    console.log(`Individual reports are available in: reports/Dynamic_testing_reports/`);
+    console.log(`==================================================\n`);
 
     if (browser) await browser.close();
 });
 
-function createValidatorAndConfig(type, page, config) {
+function createValidatorAndConfig(type, page, config, context = null) {
     let validator, configChecker;
     const t = type.toLowerCase().replace(/_/g, '').replace(/-/g, '');
+    const activeContext = context || page;
 
     switch (t) {
         case 'avatargroup':
             validator = new AvatarGroupValidator(page, config);
-            configChecker = new AvatarGroupConfig(page, config);
+            configChecker = new AvatarGroupConfig(activeContext, config);
             break;
         case 'horizontalscroll':
         case 'marqueeleftright':
             validator = new HorizontalScrollValidator(page, config);
-            configChecker = new HorizontalScrollConfig(page, config);
+            configChecker = new HorizontalScrollConfig(activeContext, config);
             break;
         case 'avatarslider':
         case 'singleslider':
             validator = new AvatarSliderValidator(page, config);
-            configChecker = new AvatarSliderConfig(page, config);
+            configChecker = new AvatarSliderConfig(activeContext, config);
             break;
         case 'carousel':
         case 'carouselslider':
             validator = new CarouselValidator(page, config);
-            configChecker = new CarouselConfig(page, config);
+            configChecker = new CarouselConfig(activeContext, config);
             break;
         case 'floatingcards':
         case 'floatingtoast':
             validator = new FloatingCardsValidator(page, config);
-            configChecker = new FloatingCardsConfig(page, config);
+            configChecker = new FloatingCardsConfig(activeContext, config);
             break;
         case 'masonry':
             validator = new MasonryValidator(page, config);
-            configChecker = new MasonryConfig(page, config);
+            configChecker = new MasonryConfig(activeContext, config);
             break;
         case 'stripslider':
         case 'marqueestripe':
             validator = new StripSliderValidator(page, config);
-            configChecker = new StripSliderConfig(page, config);
+            configChecker = new StripSliderConfig(activeContext, config);
             break;
         case 'verticalscroll':
         case 'marqueeupdown':
             validator = new VerticalScrollValidator(page, config);
-            configChecker = new VerticalScrollConfig(page, config);
+            configChecker = new VerticalScrollConfig(activeContext, config);
             break;
         default:
             console.warn(`Unknown widget type '${type}' (normalized: '${t}'), defaulting to HorizontalScroll fallback.`);
             validator = new HorizontalScrollValidator(page, config);
-            configChecker = new HorizontalScrollConfig(page, config);
+            configChecker = new HorizontalScrollConfig(activeContext, config);
     }
+
+    if (context && validator.widget) {
+        validator.widget.context = context;
+        validator.widget.isContextFixed = true;
+    }
+
     return { validator, configChecker };
 }
 
@@ -265,6 +315,8 @@ function generateHtmlReport(data, filePath) {
             .status-badge { padding: 5px 10px; border-radius: 4px; font-size: 0.8em; color: white; }
             .status-Processed { background-color: #27ae60; }
             .status-Failed { background-color: #c0392b; }
+            .status-Widget-Not-Found { background-color: #f39c12; }
+            .status-Timeout { background-color: #e67e22; }
             
             .log-list { list-style: none; padding: 0; max-height: 400px; overflow-y: auto; background: #fafafa; border: 1px solid #eee; border-radius: 4px; }
             .log-item { padding: 8px 12px; border-bottom: 1px solid #eee; font-family: consolas, monospace; font-size: 0.9em; }
@@ -292,7 +344,7 @@ function generateHtmlReport(data, filePath) {
                 <div class="entry">
                     <h2>
                         <span>${r.url} <small style="color: #7f8c8d; font-weight: normal;">(${r.type || 'Unknown'})</small></span>
-                        <span class="status-badge status-${r.status}">${r.status}</span>
+                        <span class="status-badge status-${(r.status || 'Unknown').replace(/\s+/g, '-')}">${r.status}</span>
                     </h2>
                     
                     ${r.error ? `<div class="failure-card"><strong>Error:</strong> ${r.status === 'Failed' ? r.error : ''}</div>` : ''}

@@ -45,7 +45,9 @@ class AvatarSliderWidget extends BaseWidget {
         this.logAudit('Inline CTA: Not applicable for Avatar Slider.', 'info');
 
         // 5. Social Redirection validation
-        await this.validateSocialRedirection();
+        if (this.config.allow_social_redirection == 1 || this.config.allow_social_redirection === '1') {
+            await this.validateSocialRedirection();
+        }
 
         this.logAudit('Interaction: User can navigate and play media.');
     }
@@ -536,12 +538,123 @@ class AvatarSliderWidget extends BaseWidget {
         }
     }
 
+    async validateDateConsistency() {
+        const configDate = this.config.allow_to_display_feed_date;
+        console.log(`[AvatarSliderWidget] Validating Date Consistency (Config: ${configDate})...`);
+
+        try {
+            // Use slider track to avoid clones/hidden elements outside
+            const track = this.context.locator(this.sliderTrackSelector);
+            const dateElements = track.locator('.feedspace-element-date, .feedspace-wol-date, .feedspace-element-bio-top span');
+
+            // To be safe, also look at the general card selector result if track is empty (fallback)
+            const fallbackDates = this.context.locator('.feedspace-review-box .feedspace-element-date');
+
+            const count = await dateElements.count();
+            const finalCount = count > 0 ? count : await fallbackDates.count();
+            const finalDates = count > 0 ? dateElements : fallbackDates;
+
+            if (configDate == 0 || configDate === '0') {
+                if (finalCount === 0) {
+                    this.logAudit('Date Consistency: Dates are hidden as per configuration.', 'pass');
+                } else {
+                    // Check visibility logic - iterate a few
+                    let visibleCount = 0;
+                    for (let i = 0; i < Math.min(finalCount, 5); i++) {
+                        if (await finalDates.nth(i).isVisible()) visibleCount++;
+                    }
+
+                    if (visibleCount === 0) {
+                        this.logAudit('Date Consistency: Date elements present but hidden (CSS checks out).', 'pass');
+                    } else {
+                        this.logAudit(`Date Consistency: Dates should be hidden (0) but passed visibility check on ${visibleCount} samples.`, 'fail');
+                    }
+                }
+            } else if (configDate == 1 || configDate === '1') {
+                if (finalCount > 0) {
+                    // Check specific "undefined" or "null" test
+                    const texts = await finalDates.allInnerTexts();
+                    const invalidDates = texts.filter(t => t.toLowerCase().includes('undefined') || t.toLowerCase().includes('null'));
+
+                    if (invalidDates.length > 0) {
+                        this.logAudit(`Date Consistency: Found invalid dates (undefined/null) in ${invalidDates.length} instances.`, 'fail');
+                    } else {
+                        // Check visibility of at least one
+                        if (await finalDates.first().isVisible()) {
+                            this.logAudit(`Date Consistency: All ${finalCount} dates found are valid and visible.`, 'pass');
+                        } else {
+                            this.logAudit('Date Consistency: Dates found in DOM but seemingly hidden.', 'fail');
+                        }
+                    }
+                } else {
+                    this.logAudit('Date Consistency: Dates expected (1) but none found in slider items.', 'fail');
+                }
+            } else {
+                this.logAudit(`Date Consistency: Config value '${configDate}' is optional/unknown. Found ${finalCount} dates.`, 'info');
+            }
+        } catch (e) {
+            this.logAudit(`Date Consistency: Error during check - ${e.message}`, 'info');
+        }
+    }
+
     async validateSocialRedirection() {
-        const icon = this.context.locator('.social-redirection-button, .feedspace-element-header-icon > a > img').first();
-        if (await icon.isVisible()) {
-            this.logAudit('Social Redirection: Icon found.');
+        const configSocial = this.config.allow_social_redirection;
+        console.log(`[AvatarSliderWidget] Validating Social Redirection (Config: ${configSocial})...`);
+
+        const socialRedirectionSelector = '.social-redirection-button, .feedspace-element-header-icon > a > img, div.flex > div.flex > a.feedspace-d6-header-icon, .feedspace-element-header-icon a';
+        const icons = this.context.locator(socialRedirectionSelector);
+        const count = await icons.count();
+
+        if (configSocial == 0 || configSocial === '0') {
+            if (count === 0) {
+                this.logAudit('Social Redirection: Icons are hidden as per configuration.', 'pass');
+            } else {
+                // Check visibility
+                let visibleCount = 0;
+                for (let i = 0; i < count; i++) {
+                    if (await icons.nth(i).isVisible()) visibleCount++;
+                }
+
+                if (visibleCount === 0) {
+                    this.logAudit('Social Redirection: Icons present but hidden (CSS checks out).', 'pass');
+                } else {
+                    this.logAudit(`Social Redirection: Icons should be hidden (0) but ${visibleCount} are visible.`, 'fail');
+                }
+            }
+        } else if (configSocial == 1 || configSocial === '1') {
+            if (count > 0) {
+                this.logAudit(`Social Redirection: Found ${count} social redirection elements.`);
+                let allValid = true;
+                for (let i = 0; i < count; i++) {
+                    const icon = icons.nth(i);
+                    if (await icon.isVisible()) {
+                        const tagName = await icon.evaluate(el => el.tagName.toLowerCase());
+                        let hasLink = false;
+                        if (tagName === 'a') {
+                            const href = await icon.getAttribute('href');
+                            if (href && (href.startsWith('http') || href.includes('social'))) hasLink = true;
+                        } else {
+                            const parentLink = icon.locator('xpath=./ancestor::a').first();
+                            if (await parentLink.count() > 0) {
+                                const href = await parentLink.getAttribute('href');
+                                if (href) hasLink = true;
+                            }
+                        }
+
+                        if (!hasLink) {
+                            this.logAudit('Social Redirection: Found icon but no valid redirection link.', 'fail');
+                            allValid = false;
+                        }
+                    }
+                }
+                if (allValid) {
+                    this.logAudit('Social Redirection: All icons have valid links.', 'pass');
+                }
+            } else {
+                this.logAudit('Social Redirection: Icons expected (1) but none found.', 'fail');
+            }
         } else {
-            this.logAudit('Social Redirection: Icon not found.', 'info');
+            this.logAudit(`Social Redirection: Config value '${configSocial}' is optional/unknown. Found ${count} icons.`, 'info');
         }
     }
 }

@@ -159,13 +159,15 @@ class WidgetFactory {
                     if (mainFrameFoundTypes.has(type)) continue;
                     if (detectedInfo.some(d => d.frame === frame && d.type === type)) continue;
 
-                    // Increase timeout and check for presence even if not immediately visible (some widgets lazy-load styles)
+                    // Increase timeout and check for presence
                     const locator = frame.locator(selector).first();
                     const isVisible = await locator.isVisible({ timeout: 3000 }).catch(() => false);
-                    const exists = (await locator.count().catch(() => 0)) > 0;
 
-                    if (isVisible || exists) {
-                        console.log(`Widget detected: ${type} in frame via selector: ${selector} (Visible: ${isVisible}, Exists: ${exists})`);
+                    // For AvatarGroup and Masonry, presence without visibility is often a clone or hidden variant
+                    const requiresVisibility = ['avatargroup', 'masonry', 'carousel'].includes(type);
+
+                    if (isVisible || (!requiresVisibility && (await locator.count().catch(() => 0)) > 0)) {
+                        console.log(`Widget detected: ${type} in frame via selector: ${selector} (Visible: ${isVisible})`);
                         detectedInfo.push({ type, frame, method: 'selector' });
                     }
                 }
@@ -205,12 +207,15 @@ class WidgetFactory {
                 kept = infos.filter(i => i.frame !== page.mainFrame());
             }
 
-            // Standard unique check
+            // STRICT DEDUPLICATION: Only allow ONE instance of each type per frame (take the first visible one)
+            const seenFramesForType = new Set();
             for (const info of kept) {
-                const key = `${info.type}-${info.frame === page.mainFrame() ? 'main' : info.frame.url()}`;
-                if (!seen.has(key)) {
+                const frameKey = info.frame === page.mainFrame() ? 'main' : info.frame.url();
+                if (!seenFramesForType.has(frameKey)) {
                     uniqueDetected.push(info);
-                    seen.add(key);
+                    seenFramesForType.add(frameKey);
+                } else {
+                    console.log(`[Factory] Deduplication: Skipping duplicate '${type}' in frame: ${frameKey}`);
                 }
             }
         }
@@ -221,8 +226,30 @@ class WidgetFactory {
             uniqueDetected.push({ type: widgetTypeHint.toLowerCase(), frame: page });
         }
 
-        const instances = [];
+        // Global Deduplication: For many widgets, we ONLY want one report per URL across all frames
+        const globallyDeduplicated = [];
+        const seenBucketsGlobally = new Set();
+
         for (const info of uniqueDetected) {
+            const normalizedType = info.type.toLowerCase().replace(/_/g, '').replace(/-/g, '');
+            // For key widgets, strictly one per URL to avoid duplicate reports for hidden clones
+            const strictlyUnique = ['avatargroup', 'masonry', 'carousel', 'marqueeleftright', 'marqueeupdown', 'verticalscroll', 'horizontalscroll'].includes(normalizedType);
+
+            if (strictlyUnique) {
+                if (!seenBucketsGlobally.has(normalizedType)) {
+                    globallyDeduplicated.push(info);
+                    seenBucketsGlobally.add(normalizedType);
+                    console.log(`[Factory] Global Deduplication: Keeping first instance of '${info.type}' as bucket '${normalizedType}'`);
+                } else {
+                    console.log(`[Factory] Global Deduplication: Skipping extra '${info.type}' on this page (Bucket '${normalizedType}' already seen).`);
+                }
+            } else {
+                globallyDeduplicated.push(info);
+            }
+        }
+
+        const instances = [];
+        for (const info of globallyDeduplicated) {
             const widgetConfig = config.widgets.find(w => w.type.toLowerCase() === info.type.toLowerCase()) || { type: info.type, uiRules: {} };
             if (!widgetConfig.url && config.widgets.length > 0) {
                 // If we didn't find a matching type, and there's only one widget in config, assume it's this one

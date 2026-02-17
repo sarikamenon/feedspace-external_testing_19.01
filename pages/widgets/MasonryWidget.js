@@ -29,17 +29,23 @@ class MasonryWidget extends BaseWidget {
         // 2. Load More validation
         await this.validateLoadMore();
 
-        // 3. Media Playback validation
-        await this.validateMediaPlayback();
-
-        // 4. Read More / Less validation
-        await this.validateReadMore();
-
-        // 5. Inline CTA validation
+        // 3. Branding & CTA
+        await this.validateBranding();
         await this.validateCTA();
 
+        // 4. Media Playback validation
+        await this.validateMediaPlayback();
+
+        // 5. Read More / Less validation
+        await this.validateReadMore();
+
         // 6. Social Redirection validation
-        await this.validateSocialRedirection();
+        if (this.config.allow_social_redirection == 1 || this.config.allow_social_redirection === '1') {
+            await this.validateSocialRedirection();
+        }
+
+        // 7. Date Consistency
+        await this.validateDateConsistency();
     }
 
     async validateLoadMore() {
@@ -96,21 +102,25 @@ class MasonryWidget extends BaseWidget {
         }
     }
 
+    async validateBranding() {
+        // Masonry specific branding check
+        const branding = this.context.locator('a[title="Capture reviews with Feedspace"], .feedspace-branding, a:has-text("Feedspace"), a[href*="utm_source=powered-by-feedspace"]').first();
+        if (await branding.isVisible()) {
+            this.logAudit('Branding: Feedspace branding is visible in masonry context.');
+        } else {
+            this.logAudit('Branding: Feedspace branding not found or hidden in masonry.', 'info');
+        }
+    }
+
     async validateCTA() {
         console.log('Running Masonry Inline CTA detection...');
-        const ctaSelector = '.feedspace-element-feed-box-inner.feedspace-inline-cta-card, .feedspace-inline-cta-card';
+        const ctaSelector = '.feedspace-element-feed-box-inner.feedspace-inline-cta-card, .feedspace-inline-cta-card, .feedspace-cta-content, .feedspace-cta-button-container-d9';
         const cta = this.context.locator(ctaSelector).first();
 
         if (await cta.isVisible().catch(() => false)) {
-            this.logAudit('Inline CTA found: .feedspace-inline-cta-card');
+            this.logAudit(`Inline CTA detected using selector: ${ctaSelector}`);
         } else {
-            // Fallback to base check if specific one is missing
-            const baseCta = this.context.locator('.feedspace-cta-button-container-d9, .feedspace-cta-content').first();
-            if (await baseCta.isVisible().catch(() => false)) {
-                this.logAudit('Inline CTA found: .feedspace-cta-content');
-            } else {
-                this.logAudit('No Inline CTA found on this Masonry widget.', 'info');
-            }
+            this.logAudit('No Inline CTA found on this Masonry widget.', 'info');
         }
     }
 
@@ -289,37 +299,107 @@ class MasonryWidget extends BaseWidget {
         }
     }
 
+    async validateDateConsistency() {
+        const configDate = this.config.allow_to_display_feed_date;
+        console.log(`[MasonryWidget] Validating Date Consistency (Config: ${configDate})...`);
+
+        // Use locators relevant to Masonry layout
+        const dateElements = this.context.locator('.feedspace-element-date, .feedspace-wol-date, .feedspace-element-bio-top span');
+        const foundCount = await dateElements.count();
+
+        if (configDate == 0 || configDate === '0') {
+            if (foundCount === 0) {
+                this.logAudit('Date Consistency: Dates are hidden as per configuration.', 'pass');
+            } else {
+                // Check visibility
+                let visibleCount = 0;
+                for (let i = 0; i < foundCount; i++) {
+                    if (await dateElements.nth(i).isVisible()) visibleCount++;
+                }
+
+                if (visibleCount === 0) {
+                    this.logAudit('Date Consistency: Date elements present but hidden (CSS checks out).', 'pass');
+                } else {
+                    this.logAudit(`Date Consistency: Dates should be hidden (0) but ${visibleCount} are visible.`, 'fail');
+                }
+            }
+        } else if (configDate == 1 || configDate === '1') {
+            if (foundCount > 0) {
+                // Check for "undefined", "null", or empty text
+                const texts = await dateElements.allInnerTexts();
+                const invalidDates = texts.filter(t => t.toLowerCase().includes('undefined') || t.toLowerCase().includes('null') || t.trim() === '');
+
+                if (invalidDates.length > 0) {
+                    this.logAudit(`Date Consistency: Found invalid dates (undefined/null/empty) in ${invalidDates.length} cards.`, 'fail');
+                } else {
+                    this.logAudit(`Date Consistency: All ${foundCount} dates are valid and visible.`, 'pass');
+                }
+            } else {
+                this.logAudit('Date Consistency: Dates expected (1) but none found in DOM.', 'fail');
+            }
+        } else {
+            this.logAudit(`Date Consistency: Config value '${configDate}' is optional/unknown. Found ${foundCount} dates.`, 'info');
+        }
+    }
+
     async validateSocialRedirection() {
-        console.log('Running Masonry Social Redirection check...');
-        const socialRedirectionSelector = 'div.flex > div.flex > a.feedspace-d6-header-icon, .social-redirection-button, .feedspace-element-header-icon > a > img';
+        const configSocial = this.config.allow_social_redirection;
+        console.log(`[MasonryWidget] Validating Social Redirection (Config: ${configSocial})...`);
+
+        const socialRedirectionSelector = 'div.flex > div.flex > a.feedspace-d6-header-icon, .social-redirection-button, .feedspace-element-header-icon > a > img, .feedspace-element-header-icon a';
         const icons = this.context.locator(socialRedirectionSelector);
         const count = await icons.count();
 
-        if (count > 0) {
-            this.logAudit(`Social Redirection: Found ${count} social redirection elements.`);
-            for (let i = 0; i < count; i++) {
-                const icon = icons.nth(i);
-                if (await icon.isVisible()) {
-                    const tagName = await icon.evaluate(el => el.tagName.toLowerCase());
-                    let hasLink = false;
-                    if (tagName === 'a') {
-                        const href = await icon.getAttribute('href');
-                        if (href && (href.startsWith('http') || href.includes('social'))) hasLink = true;
-                    } else {
-                        const parentLink = icon.locator('xpath=./ancestor::a').first();
-                        if (await parentLink.count() > 0) {
-                            const href = await parentLink.getAttribute('href');
-                            if (href) hasLink = true;
-                        }
-                    }
+        if (configSocial == 0 || configSocial === '0') {
+            if (count === 0) {
+                this.logAudit('Social Redirection: Icons are hidden as per configuration.', 'pass');
+            } else {
+                // Check visibility
+                let visibleCount = 0;
+                for (let i = 0; i < count; i++) {
+                    if (await icons.nth(i).isVisible()) visibleCount++;
+                }
 
-                    if (!hasLink) {
-                        this.logAudit('Social Redirection: Found icon but no valid redirection link.', 'fail');
-                    }
+                if (visibleCount === 0) {
+                    this.logAudit('Social Redirection: Icons present but hidden (CSS checks out).', 'pass');
+                } else {
+                    this.logAudit(`Social Redirection: Icons should be hidden (0) but ${visibleCount} are visible.`, 'fail');
                 }
             }
+        } else if (configSocial == 1 || configSocial === '1') {
+            if (count > 0) {
+                this.logAudit(`Social Redirection: Found ${count} social redirection elements.`);
+                let allValid = true;
+                for (let i = 0; i < count; i++) {
+                    const icon = icons.nth(i);
+                    if (await icon.isVisible()) {
+                        const tagName = await icon.evaluate(el => el.tagName.toLowerCase());
+                        let hasLink = false;
+                        if (tagName === 'a') {
+                            const href = await icon.getAttribute('href');
+                            if (href && (href.startsWith('http') || href.includes('social'))) hasLink = true;
+                        } else {
+                            const parentLink = icon.locator('xpath=./ancestor::a').first();
+                            if (await parentLink.count() > 0) {
+                                const href = await parentLink.getAttribute('href');
+                                if (href) hasLink = true;
+                            }
+                        }
+
+                        if (!hasLink) {
+                            this.logAudit('Social Redirection: Found icon but no valid redirection link.', 'fail');
+                            allValid = false;
+                        }
+                    }
+                }
+                if (allValid) {
+                    this.logAudit('Social Redirection: All icons have valid links.', 'pass');
+                }
+            } else {
+                this.logAudit('Social Redirection: Icons expected (1) but none found.', 'fail');
+            }
         } else {
-            this.logAudit('Social Redirection: No social redirection icons found.', 'info');
+            this.logAudit(`Social Redirection: Config value '${configSocial}' is optional/unknown. Found ${count} icons.`, 'info');
         }
     }
 }

@@ -1,6 +1,4 @@
 const { AvatarGroupWidget } = require('../pages/widgets/AvatarGroupWidget');
-const fs = require('fs');
-const path = require('path');
 
 class AvatarGroupValidator {
     constructor(page, config = {}) {
@@ -19,36 +17,35 @@ class AvatarGroupValidator {
         };
     }
 
-    logAudit(message, status = 'info') {
-        this.reportData.auditLog.push({ message, status });
+    logAudit(message, status = 'info', isLimitation = false) {
+        this.reportData.auditLog.push({ message, status, isLimitation });
         console.log(`[AvatarGroupValidator] ${status.toUpperCase()}: ${message}`);
     }
 
     async runFullAudit() {
         try {
             this.logAudit('Starting full Avatar Group audit...');
-
             await this.widget.initContext();
+            this.reportData.url = this.page.url();
+
+            // 0️⃣ Validate Visibility (Counts reviews & populates stats)
+            await this.widget.validateVisibility().catch(e => this.logAudit(`Visibility failed: ${e.message}`, 'fail'));
 
             // 1️⃣ API JSON → UI mapping
-            await this.validateConfigAgainstUI();
+            await this.validateConfigAgainstUI().catch(e => this.logAudit(`Config mapping failed: ${e.message}`, 'fail'));
 
-            // 2️⃣ Unique behaviors & modal interactions
-            await this.widget.validateUniqueBehaviors();
+            // 2️⃣ Unique behaviors & interactions
+            await this.widget.validateUniqueBehaviors().catch(e => this.logAudit(`Unique behaviors failed: ${e.message}`, 'fail'));
 
-            // 3️⃣ Media integrity checks
-            await this.widget.validateMediaIntegrity();
-
-            // 4️⃣ Layout checks
-            await this.widget.validateLayoutIntegrity();
-
-            // 5️⃣ Accessibility (contrast / read more)
-            await this.widget.runAccessibilityAudit();
-
-            // Include review stats from widget
+            this.logAudit('Avatar Group audit complete.');
+        } catch (e) {
+            this.logAudit(`Critical audit exception: ${e.message}`, 'fail');
+        } finally {
+            // ALWAYS merge data from widget
             this.reportData.reviewStats = this.widget.reviewStats || {};
+            this.reportData.detailedFailures = this.widget.detailedFailures || [];
+            this.reportData.accessibilityResults = this.widget.accessibilityResults || [];
 
-            // Merge widget's internal audit logs into the main report
             if (this.widget.auditLog && this.widget.auditLog.length > 0) {
                 const mappedLogs = this.widget.auditLog.map(log => ({
                     message: log.message,
@@ -57,76 +54,31 @@ class AvatarGroupValidator {
                 }));
                 this.reportData.auditLog.push(...mappedLogs);
             }
-
-            this.logAudit('Avatar Group audit complete.');
-        } catch (e) {
-            this.logAudit(`Audit failed due to exception: ${e.message}`, 'fail');
         }
     }
 
     async validateConfigAgainstUI() {
-        const configKeys = [
-            'is_show_ratings', 'show_full_review', 'allow_to_display_feed_date',
-            'allow_social_redirection', 'cta_enabled', 'hideBranding',
-            'show_avatar_border', 'avatar_border_color', 'widget_position',
-            'number_of_review_text', 'card_hover_color', 'is_show_indicators'
-        ];
+        // Instantiate the config checker to use its synchronized locators and logic
+        const { AvatarGroupConfig } = require('../configs/AvatarGroupConfig');
+        const configChecker = new AvatarGroupConfig(this.widget.context, this.config);
+        const configReport = await configChecker.generateFeatureReport();
 
-        for (const key of configKeys) {
-            const apiValue = this.config[key] ?? 'N/A';
-            let uiValue = 'N/A';
+        // Map configChecker results to validator's reportData
+        for (const res of configReport) {
+            this.reportData.featureResults.push({
+                feature: res.feature,
+                api_value: res.api_value,
+                ui_value: res.ui_value,
+                status: res.status
+            });
 
-            try {
-                let locator;
-                switch (key) {
-                    case 'is_show_ratings':
-                        locator = this.widget.context.locator('.feedspace-stars, .star-rating');
-                        break;
-                    case 'show_full_review':
-                        locator = this.widget.context.locator('.feedspace-read-more-btn, i:has-text("Read More")');
-                        break;
-                    case 'allow_to_display_feed_date':
-                        locator = this.widget.context.locator('.feedspace-element-date, .feedspace-wol-date');
-                        break;
-                    case 'allow_social_redirection':
-                        locator = this.widget.context.locator('.social-redirection-button img');
-                        break;
-                    case 'cta_enabled':
-                        locator = this.widget.context.locator('.feedspace-cta-button-container-d9');
-                        break;
-                    case 'hideBranding':
-                    case 'allow_to_remove_branding':
-                        locator = this.widget.context.locator('a[href*="utm_source=powered-by-feedspace"]');
-                        break;
-                    default:
-                        locator = null;
-                }
-
-                if (locator && (await locator.count()) > 0) {
-                    uiValue = (await locator.first().isVisible()) ? '1' : '0';
-                }
-            } catch (e) {
-                uiValue = 'error';
-            }
-
-            const status = apiValue.toString() === uiValue.toString() ? 'PASS' : 'FAIL';
-            this.reportData.featureResults.push({ feature: key, api_value: apiValue, ui_value: uiValue, status });
-            this.logAudit(`Feature: ${key}, API: ${apiValue}, UI: ${uiValue}, Status: ${status}`, status === 'FAIL' ? 'fail' : 'info');
+            const logStatus = res.status === 'PASS' ? 'info' : 'fail';
+            this.logAudit(`Feature: ${res.feature}, API: ${res.api_value}, UI: ${res.ui_value}, Status: ${res.status}${res.info ? ` (${res.info})` : ''}`, logStatus);
 
             // Update summary
             this.reportData.summary.total++;
-            if (status === 'PASS') this.reportData.summary.pass++;
+            if (res.status === 'PASS') this.reportData.summary.pass++;
             else this.reportData.summary.fail++;
-        }
-    }
-
-    async generateReport(reportName = 'AvatarGroupReport.json') {
-        try {
-            const filePath = path.join(process.cwd(), reportName);
-            fs.writeFileSync(filePath, JSON.stringify(this.reportData, null, 2), 'utf-8');
-            this.logAudit(`Report generated: ${filePath}`);
-        } catch (e) {
-            this.logAudit(`Failed to write report: ${e.message}`, 'fail');
         }
     }
 

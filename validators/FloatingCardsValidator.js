@@ -17,32 +17,37 @@ class FloatingCardsValidator {
             accessibilityResults: [],
             summary: { total: 0, pass: 0, fail: 0 }
         };
-        this.logAudit('Detailed Audit results for FloatingCards Widget', 'info');
     }
 
-    logAudit(message, status = 'info') {
-        this.reportData.auditLog.push({ message, status });
+    logAudit(message, status = 'info', isLimitation = false) {
+        this.reportData.auditLog.push({ message, status, isLimitation });
         console.log(`[FloatingCardsValidator] ${status.toUpperCase()}: ${message}`);
     }
 
     async runFullAudit() {
         try {
-            this.logAudit('Starting full Floating Cards audit...', 'info');
-
+            this.logAudit('Starting full Floating Cards audit...');
             await this.widget.initContext();
+            this.reportData.url = this.page.url();
+
+            // 0️⃣ Validate Visibility (Counts reviews & populates stats)
+            await this.widget.validateVisibility().catch(e => this.logAudit(`Visibility failed: ${e.message}`, 'fail'));
 
             // 1️⃣ API JSON → UI mapping
-            await this.validateConfigAgainstUI();
+            await this.validateConfigAgainstUI().catch(e => this.logAudit(`Config mapping failed: ${e.message}`, 'fail'));
 
-            // 2️⃣ Unique behaviors & interactions (includes Popups, Read More, etc.)
-            await this.widget.validateUniqueBehaviors();
+            // 2️⃣ Unique behaviors & interactions
+            await this.widget.validateUniqueBehaviors().catch(e => this.logAudit(`Unique behaviors failed: ${e.message}`, 'fail'));
 
-            // 3️⃣ Finalize stats and failures
+            this.logAudit('Floating Cards audit complete.');
+        } catch (e) {
+            this.logAudit(`Critical audit exception: ${e.message}`, 'fail');
+        } finally {
+            // ALWAYS merge data from widget
             this.reportData.reviewStats = this.widget.reviewStats || {};
             this.reportData.detailedFailures = this.widget.detailedFailures || [];
             this.reportData.accessibilityResults = this.widget.accessibilityResults || [];
 
-            // Merge widget's internal audit logs
             if (this.widget.auditLog && this.widget.auditLog.length > 0) {
                 const mappedLogs = this.widget.auditLog.map(log => ({
                     message: log.message,
@@ -51,69 +56,51 @@ class FloatingCardsValidator {
                 }));
                 this.reportData.auditLog.push(...mappedLogs);
             }
-
-            this.logAudit('Floating Cards audit complete.', 'info');
-        } catch (e) {
-            this.logAudit(`Audit failed due to exception: ${e.message}`, 'fail');
         }
     }
 
     async validateConfigAgainstUI() {
-        const configKeys = [
-            'is_show_ratings', 'show_full_review', 'allow_to_display_feed_date',
-            'show_platform_icon', 'cta_enabled', 'allow_to_remove_branding'
-        ];
+        this.logAudit('Performing interactive config check (opening popup)...');
+        // Open first card to reveal modal elements
+        const firstCard = this.page.locator('.feedspace-card.mounted').first();
+        const popup = this.page.locator('.fe-review-modal, #fs-global-review-modal-d13').first();
 
-        for (const key of configKeys) {
-            const apiValue = this.config[key] ?? 'N/A';
-            let uiValue = 'N/A';
-
-            try {
-                let locator;
-                switch (key) {
-                    case 'is_show_ratings':
-                        locator = this.widget.context.locator(`div.feedspace-element-feed-box-inner > div.feedspace-element-review-box > svg`);
-                        break;
-                    case 'show_full_review':
-                        // User specifically mapped this to read-less-btn structure in Config snippet
-                        locator = this.widget.context.locator('.feedspace-read-less-btn.feedspace-element-read-more.feedspace-element-read-more-open');
-                        break;
-                    case 'allow_to_display_feed_date':
-                        locator = this.widget.context.locator('.feedspace-element-date.feedspace-wol-date');
-                        break;
-                    case 'show_platform_icon':
-                        locator = this.widget.context.locator(`div.feedspace-element-header-icon > a > img`);
-                        break;
-                    case 'cta_enabled':
-                        locator = this.widget.context.locator(`.feedspace-cta-button-container-d13`);
-                        break;
-                    case 'allow_to_remove_branding':
-                    case 'hideBranding':
-                        locator = this.widget.context.locator('a[title="Capture reviews with Feedspace"]');
-                        break;
-                }
-
-                if (locator) {
-                    // check existence in DOM (isVisible on first element)
-                    uiValue = await locator.first().isVisible().catch(() => false) ? "1" : "0";
-                }
-            } catch (e) {
-                uiValue = 'error';
+        let popupOpened = false;
+        try {
+            if (await firstCard.isVisible()) {
+                await firstCard.click({ force: true });
+                await popup.waitFor({ state: 'visible', timeout: 5000 });
+                popupOpened = true;
             }
+        } catch (e) {
+            this.logAudit(`Could not open popup for config check: ${e.message}`, 'info');
+        }
 
-            const status = apiValue.toString() === uiValue.toString() ? 'PASS' : 'FAIL';
+        const { FloatingCardsConfig } = require('../configs/FloatingCardsConfig');
+        const configChecker = new FloatingCardsConfig(this.page, this.config);
+        const configReport = await configChecker.generateFeatureReport();
+
+        // Close popup if opened
+        if (popupOpened) {
+            const closeBtn = popup.locator('button.fe-review-modal-close, button[aria-label="Close"], .close-button').first();
+            if (await closeBtn.isVisible()) {
+                await closeBtn.click();
+            } else {
+                await this.page.keyboard.press('Escape');
+            }
+            await popup.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => { });
+        }
+
+        for (const res of configReport) {
             this.reportData.featureResults.push({
-                feature: key,
-                api_value: apiValue,
-                ui_value: uiValue,
-                status
+                feature: res.feature,
+                api_value: res.api_value,
+                ui_value: res.ui_value,
+                status: res.status
             });
 
-            if (status === 'FAIL') {
-                this.logAudit(`Feature: ${key}, API: ${apiValue}, UI: ${uiValue}, Status: FAIL`, 'fail');
-            } else {
-                this.logAudit(`Feature: ${key}, API: ${apiValue}, UI: ${uiValue}, Status: PASS`);
-            }
+            const logStatus = res.status === 'PASS' ? 'info' : 'fail';
+            this.logAudit(`Feature: ${res.feature}, API: ${res.api_value}, UI: ${res.ui_value}, Status: ${res.status}${res.info ? ` (${res.info})` : ''}`, logStatus);
         }
     }
 

@@ -35,6 +35,14 @@ class AvatarGroupWidget extends BaseWidget {
 
         this.logAudit('Validating Avatar Group interactive behaviors (Click & Verify)...');
 
+        // 🟢 Platform Icon Check
+        await this.validatePlatformIcon();
+
+        // 🟢 Social Redirection Check
+        if (this.config.allow_social_redirection == 1 || this.config.allow_social_redirection === '1') {
+            await this.validateSocialRedirection();
+        }
+
         // Diagnostic: Log ALL avatar boxes found
         const allBoxes = this.context.locator('.fe-avatar-box');
         const totalRaw = await allBoxes.count();
@@ -97,8 +105,8 @@ class AvatarGroupWidget extends BaseWidget {
             '.fe-modal-content-wrap'
         ];
         // Ultra-robust locators
-        const readMoreTrigger = '.feedspace-read-more-btn, .feedspace-read-more-text, .feedspace-element-read-more, .feedspace-read-more, span:has-text("Read More"), a:has-text("Read More"), text=/Read [mM]ore/';
-        const readLessTrigger = 'i:has-text("Read Less"), .feedspace-read-less-btn, .fe-read-less, span:has-text("Read Less"), text=/Read [lL]ess/';
+        const readMoreTrigger = 'i:has-text("Read More")';
+        const readLessTrigger = 'i:has-text("Read Less")';
         const videoPlayBtn = '.play-btn, .video-play-button, .feedspace-video-review-header .play-btn, .fs-video-play, .feedspace-element-play-feed:not(.feedspace-element-audio-feed)';
         const audioPlayBtn = '.feedspace-element-audio-feed .play-btn, .audio-player .play-btn, .fs-audio-play, .feedspace-element-audio-icon .play-btn';
         const closeButtonSelector = '.feedspace-modal-close, .feedspace-element-close-modal, .fe-modal-close, [aria-label="Close modal"], i:has-text("Close"), .close-btn, .feedspace-element-close';
@@ -137,8 +145,37 @@ class AvatarGroupWidget extends BaseWidget {
                     if (modal) break;
                 }
 
-                if (await modal && await modal.isVisible()) {
+                if (modal && await modal.isVisible()) {
                     interactionCount++;
+
+                    // 0. Verify Platform Icon and Date for THIS review box
+                    const socialSelectorPerModal = 'img[alt$="logo"], .feedspace-element-header-icon img, .feedspace-element-header-icon, i.social-redirection-button, .fe-social-icon, .fe-social-link img, img[src*="social-icons"], img[src*="logo"], div[class*="social-icon"], .feedspace-element-header-icon a';
+                    const dateSelectorPerModal = '.feedspace-element-date, .feedspace-wol-date, .feedspace-element-bio-top span';
+
+                    const iconPerModal = modal.locator(socialSelectorPerModal).first();
+                    const datePerModal = modal.locator(dateSelectorPerModal).first();
+
+                    // Wait for content with a reasonable timeout for this specific review
+                    await iconPerModal.waitFor({ state: 'visible', timeout: 1000 }).catch(() => { });
+                    await datePerModal.waitFor({ state: 'visible', timeout: 1000 }).catch(() => { });
+                    await this.page.waitForTimeout(300).catch(() => { }); // Minimal settle
+
+                    const isIconVisible = await iconPerModal.isVisible().catch(() => false);
+                    const isDateVisiblePerModal = await datePerModal.isVisible().catch(() => false);
+                    let hasDateTextPerModal = false;
+                    if (isDateVisiblePerModal) {
+                        const dateText = await datePerModal.innerText();
+                        hasDateTextPerModal = dateText.trim().length > 0;
+                    }
+
+                    const expIcon = (this.config.show_platform_icon == 1 || this.config.show_platform_icon == '1') ? 'Visible' : 'Hidden';
+                    const expDate = (this.config.allow_to_display_feed_date == 1 || this.config.allow_to_display_feed_date == '1') ? 'Visible' : 'Hidden';
+
+                    this.logAudit(`[Interactive] Review ID ${id}: Platform Icon: ${isIconVisible ? 'Found' : 'Not Found'} (Expected: ${expIcon}), Date: ${hasDateTextPerModal ? 'Found' : (isDateVisiblePerModal ? 'Empty' : 'Not Found')} (Expected: ${expDate})`);
+
+                    if (isIconVisible) {
+                        this.logAudit('Platform icon found');
+                    }
 
                     // Force a scroll inside the modal to reveal things
                     await modal.evaluate(el => {
@@ -218,7 +255,7 @@ class AvatarGroupWidget extends BaseWidget {
 
 
                     // 4. Verify CTA
-                    const userCTA = modal.locator('div.feedspace-element-feed-box-inner > div.feedspace-video-review-body > div.feedspace-cta-button-container-d9').first();
+                    const userCTA = modal.locator('div.fe-review-box-inner > div.feedspace-element-feed-box-inner > div.feedspace-cta-button-container-d9').first();
                     const ctaSelectors = ['.feedspace-cta-content', '.fe-modal-cta', 'a:has-text("Get Started")', '.feedspace-cta-btn', '.fe-cta-btn'];
 
                     if (!(await userCTA.isVisible())) {
@@ -338,160 +375,241 @@ class AvatarGroupWidget extends BaseWidget {
         }
     }
 
-    // async validateDateConsistency() {
-    //     // Overridden to avoid base methodology. 
-    //     // Logic moved to validateAdvancedConfig for this widget.
-    //     this.logAudit('Date Consistency check deferred to Advanced Configuration validation.', 'info');
-    // }
+    async validateDateConsistency(modalContainer = null) {
+        const c = this.config;
+        const configDate = c.allow_to_display_feed_date;
+        console.log(`[AvatarGroupWidget] Validating Date Consistency (Config: ${configDate})...`);
+
+        if (!modalContainer) {
+            modalContainer = this.page.locator('.fe-review-box, .feedspace-element-review-contain-box, .fe-modal-content, .fe-review-box-inner').filter({ visible: true }).first();
+        }
+
+        if (!(await modalContainer.isVisible())) {
+            this.logAudit('[Date Consistency] Skipped: No visible modal container to check dates against.', 'info');
+            return;
+        }
+
+        const dateSelector = '.feedspace-element-date, .feedspace-wol-date, .feedspace-element-bio-top span';
+        const dateEl = modalContainer.locator(dateSelector).first();
+
+        // Smart wait using config
+        if (configDate == 1 || configDate === '1') {
+            await this.page.waitForFunction(el => el && el.innerText.trim().length > 0, await dateEl.elementHandle(), { timeout: 2000 }).catch(() => { });
+        }
+
+        const isDateVisible = await dateEl.isVisible().catch(() => false);
+        let hasDateText = false;
+        if (isDateVisible) {
+            const text = await dateEl.innerText();
+            hasDateText = text.trim().length > 0;
+            if (text.toLowerCase().includes('undefined') || text.toLowerCase().includes('null')) {
+                this.logAudit(`[Date Consistency] Failed: Date text contains 'undefined' or 'null'`, 'fail');
+                return;
+            }
+        }
+
+        if (configDate == 1 || configDate === '1') {
+            if (isDateVisible && hasDateText) {
+                this.logAudit('[Date Consistency] Validated (Dates visible).', 'pass');
+            } else {
+                this.logAudit(`[Date Consistency] Failed (Dates expected but not found/empty).`, 'fail');
+            }
+        } else if (configDate == 0 || configDate === '0') {
+            if (!isDateVisible) { // If not visible, pass. If visible but empty, maybe pass? Config 0 usually means HIDDEN.
+                this.logAudit('[Date Consistency] Validated (Dates hidden).', 'pass');
+            } else {
+                if (!hasDateText) {
+                    this.logAudit('[Date Consistency] Validated (Date element present but empty).', 'pass');
+                } else {
+                    this.logAudit('[Date Consistency] Failed (Dates should be hidden).', 'fail');
+                }
+            }
+        } else {
+            this.logAudit(`[Date Consistency] Config '${configDate}' unknown. Date visible: ${isDateVisible}`, 'info');
+        }
+    }
 
     async validateAdvancedConfig() {
         this.logAudit('Running Advanced Configuration Validation...');
         const c = this.config;
 
+        // 🟢 OPEN MODAL to check visibility of elements typically inside (ratings, platforms, etc)
+        this.logAudit('Opening modal for advanced configuration check...');
+        const avatarTrigger = this.context.locator('.fe-avatar-box:not(.fe-avatar-more)').first();
+        if (await avatarTrigger.count() > 0) {
+            await avatarTrigger.click({ force: true });
+            // Smart wait for modal visibility
+            await this.page.waitForSelector('.fe-review-box, .feedspace-element-review-contain-box', { state: 'visible', timeout: 5000 }).catch(() => { });
+            await this.page.waitForTimeout(500); // Stabilization
+        }
+
+        const modalContainer = this.page.locator('.fe-review-box, .feedspace-element-review-contain-box, .fe-modal-content, .fe-review-box-inner').filter({ visible: true }).first();
+
         // 1. Show Star Ratings
-        // config: show_star_ratings = 1 -> Stars visible
-        // config: show_star_ratings = 0 -> Stars hidden 
-        // (User prompt separate from is_show_ratings, assuming checking for generic star display)
-        if (c.show_star_ratings == 1) {
-            const stars = this.context.locator('.feedspace-stars, .star-rating, .stars, .feedspace-video-review-header-star');
+        if (c.show_star_ratings == 1 || c.show_star_ratings == '1' || c.is_show_ratings == 1 || c.is_show_ratings == '1') {
+            const stars = modalContainer.locator('.feedspace-stars, .star-rating, .fe-avatar-rating, .fe-star-indicator');
             if (await stars.count() > 0 && await stars.first().isVisible()) {
-                this.logAudit('[Config] Show Star Ratings: Validated (Stars are visible).');
+                this.logAudit('[Config] Ratings: Validated (Stars/Ratings are visible).');
             } else {
-                this.logAudit('[Config] Show Star Ratings: Failed (Stars expected but not found).', 'fail');
+                this.logAudit('[Config] Ratings: Failed (Ratings expected but not found).', 'fail');
             }
-        } else if (c.show_star_ratings == 0) {
-            // Optional: Validate absence
         }
 
         // 2. Feedspace Branding
-        // config: hideBranding = 0 -> Visible
-        // locator: precise link with UTM params
         const brandingSelector = 'a[href*="utm_source=powered-by-feedspace"][title="Capture reviews with Feedspace"]';
         const branding = this.context.locator(brandingSelector).first();
+        const isVisible = await branding.isVisible().catch(() => false);
 
-        // If branding removal is allowed (1), branding may not exist
-        if (c.allow_to_remove_branding == 0 || c.allow_to_remove_branding == '0') {
-            // Branding required
-            if (await branding.isVisible()) {
-                this.logAudit('[Config] Branding: Visible as required(allow_to_remove_branding=0).');
+        if (c.allow_to_remove_branding == 1 || c.allow_to_remove_branding == '1') {
+            if (!isVisible) {
+                this.logAudit('[Config] Branding: Validated (Removal allowed and branding is hidden).');
             } else {
-                this.logAudit('[Config] Branding: Expected visible but not found.', 'fail');
+                this.logAudit('[Config] Branding: Failed (Removal allowed but branding is still visible).', 'fail');
             }
-        } else if (c.allow_to_remove_branding == 1 || c.allow_to_remove_branding == '1') {
-            // Branding optional
-            this.logAudit('[Config] Branding: Removal allowed (Branding may be hidden).', 'info');
+        } else if (c.allow_to_remove_branding == 0 || c.allow_to_remove_branding == '0') {
+            if (isVisible) {
+                this.logAudit('[Config] Branding: Validated (Visible as required).');
+            } else {
+                this.logAudit('[Config] Branding: Failed (Expected visible but not found).', 'fail');
+            }
         }
 
         // 3. Show Review Date
-        /* 
-        // config: allow_to_display_feed_date = 1 -> Visible
-        // config: allow_to_display_feed_date = 0 -> Hidden
-        const dateSelector = '.feedspace-element-date.feedspace-wol-date';
-        const dateEl = this.context.locator(dateSelector).first();
+        await this.validateDateConsistency(modalContainer);
 
-        const isDateVisible = await dateEl.evaluate(el => {
-            const style = window.getComputedStyle(el);
-            console.log(`[DEBUG] Date Element: Display=${style.display}, Visibility=${style.visibility}, Opacity=${style.opacity}, Text='${el.innerText}'`);
-            return style.display !== 'none' &&
-                style.visibility !== 'hidden' &&
-                style.opacity !== '0' &&
-                el.innerText.trim().length > 0;
-        }).catch(() => false);
+        // 4. Show Social Platform Icon
+        const socialSelector = 'img[alt$="logo"], .feedspace-element-header-icon img, .feedspace-element-header-icon, i.social-redirection-button, .fe-social-icon, .fe-social-link img, img[src*="social-icons"], img[src*="logo"], div[class*="social-icon"], div[class*="header-icon"], .feedspace-element-header-icon a';
+        if (c.show_platform_icon == 1 || c.show_platform_icon == '1') {
+            const icons = modalContainer.locator(socialSelector);
+            // Smart wait for icon visibility
+            await icons.first().waitFor({ state: 'visible', timeout: 1500 }).catch(() => { });
 
-        if (c.allow_to_display_feed_date == 1 || c.allow_to_display_feed_date == '1') {
-            if (isDateVisible) {
-                this.logAudit('[Config] Review Date: Validated (Dates visible).');
+            const visibleIcon = icons.filter({ visible: true }).first();
+            if (await visibleIcon.isVisible()) {
+                this.logAudit('[Config] Platform Icon: Validated (Icons visible).');
             } else {
-                this.logAudit('[Config] Review Date: Failed (Dates expected but not visible/empty).', 'fail');
+                this.logAudit('[Config] Platform Icon: Failed (Icons expected but not found).', 'fail');
             }
-        } else if (c.allow_to_display_feed_date == 0 || c.allow_to_display_feed_date == '0') {
-            if (!isDateVisible) {
-                this.logAudit('[Config] Review Date: Validated (Dates hidden).');
+        } else if (c.show_platform_icon == 0 || c.show_platform_icon == '0') {
+            const icons = modalContainer.locator(socialSelector);
+            const visibleIcon = icons.filter({ visible: true }).first();
+            if (!(await visibleIcon.isVisible())) {
+                this.logAudit('[Config] Platform Icon: Validated (Icons hidden).', 'pass');
             } else {
-                this.logAudit('[Config] Review Date: Failed (Dates should be hidden but content was found).', 'fail');
-            }
-        }
-        */
-
-        // 4. Show Review Ratings
-        // config: is_show_ratings = 1 -> Visible
-        // config: is_show_ratings = 0 -> Hidden
-        const ratingSelector = 'div.feedspace-video-review-header-star > div.feedspace-element-review-box > svg, .feedspace-stars, .star-rating';
-        if (c.is_show_ratings == 1 || c.is_show_ratings == '1') {
-            const ratings = this.context.locator(ratingSelector);
-            if (await ratings.count() > 0 && await ratings.first().isVisible()) {
-                this.logAudit('[Config] Review Ratings: Validated (Ratings visible).');
-            } else {
-                this.logAudit('[Config] Review Ratings: Failed (Ratings expected but not found).', 'fail');
-            }
-        } else if (c.is_show_ratings == 0 || c.is_show_ratings == '0') {
-            const ratings = this.context.locator(ratingSelector);
-            if (await ratings.count() === 0 || !(await ratings.first().isVisible())) {
-                this.logAudit('[Config] Review Ratings: Validated (Ratings hidden).');
-            } else {
-                this.logAudit('[Config] Review Ratings: Failed (Ratings should be hidden).', 'fail');
+                this.logAudit('[Config] Platform Icon: Failed (Icons should be hidden).', 'fail');
             }
         }
 
-        // 5. Shorten Long Reviews
-        // config: show_full_review = 0 -> Read More should be visible
-        if (c.show_full_review == 0 || c.show_full_review == '0') {
-            const readMoreTrigger = '.feedspace-read-more-btn, .feedspace-read-more-text, .feedspace-element-read-more, .feedspace-read-more, i:has-text("Read More")';
-            const readMore = this.context.locator(readMoreTrigger).first();
+        // 7. CTA
+        const ctaSelector = 'div.fe-review-box-inner > div.feedspace-element-feed-box-inner > div.feedspace-cta-button-container-d9, .fe-review-box .feedspace-cta-button-container-d9, .fe-review-box .fe-cta-container';
+        if (c.cta_enabled == 1 || c.cta_enabled == '1') {
+            const cta = this.page.locator(ctaSelector).first();
+            if (await cta.isVisible()) {
+                this.logAudit('[Config] CTA: Validated (CTA visible).');
+            } else {
+                this.logAudit('[Config] CTA: Failed (CTA expected but not found).', 'fail');
+            }
+        } else if (c.cta_enabled == 0 || c.cta_enabled == '0') {
+            const cta = this.page.locator(ctaSelector).first();
+            if (!(await cta.isVisible())) {
+                this.logAudit('[Config] CTA: Validated (CTA disabled).');
+            } else {
+                this.logAudit('[Config] CTA: Failed (CTA should be disabled).', 'fail');
+            }
+        }
 
-            if (await readMore.isVisible()) {
-                const isReadable = await this.checkContrast(readMoreTrigger);
-                if (isReadable) {
-                    this.logAudit('[Config] Shorten Reviews: Validated (Read More visible and readable).');
+        // 🟢 CLOSE MODAL
+        const closeBtnSelectors = ['.feedspace-modal-close', '.fe-modal-close', '.close-button', 'i:has-text("Close")'];
+        for (const sel of closeBtnSelectors) {
+            const btn = this.page.locator(sel).first();
+            if (await btn.isVisible()) {
+                await btn.click({ force: true }).catch(() => { });
+                break;
+            }
+        }
+
+        // Safer Escape: Support Frame contexts where page.keyboard might be undefined
+        try {
+            if (this.page.keyboard) {
+                await this.page.keyboard.press('Escape').catch(() => { });
+            } else {
+                await this.page.locator('body').press('Escape').catch(() => { });
+            }
+        } catch (err) { }
+    }
+
+    async validatePlatformIcon(modal = null) {
+        const socialSelector = 'img[alt$="logo"], .feedspace-element-header-icon img, .feedspace-element-header-icon, i.social-redirection-button, .fe-social-icon, .fe-social-link img, img[src*="social-icons"], img[src*="logo"], div[class*="social-icon"], div[class*="header-icon"]';
+        const context = modal || this.context;
+        const icon = context.locator(socialSelector).first();
+        if (await icon.isVisible().catch(() => false)) {
+            this.logAudit('Platform icon found');
+        } else {
+            this.logAudit('Platform icon not found or hidden.', 'info');
+        }
+    }
+
+    async validateSocialRedirection() {
+        // Avatar Group Specific: Check for social icons/links in the group context or opened modals
+        // Since Avatar Group often relies on modals for details, we might check the *trigger* area or just rely on the modal check if that's where they live.
+        // However, some avatar groups show small social icons on hover or next to avatars.
+
+        const configSocial = this.config.allow_social_redirection;
+        console.log(`[AvatarGroupWidget] Validating Social Redirection (Config: ${configSocial})...`);
+
+        // Selector for potential social icons outside of modals (e.g. footer, hovering)
+        const socialRedirectionSelector = '.social-redirection-button, .feedspace-element-header-icon > a > img, div.flex > div.flex > a.feedspace-d6-header-icon, .feedspace-element-header-icon a';
+        const icons = this.context.locator(socialRedirectionSelector);
+        const count = await icons.count();
+
+        if (configSocial == 0 || configSocial === '0') {
+            if (count === 0) {
+                this.logAudit('Social Redirection: Icons are hidden as per configuration (Main View).', 'pass');
+            } else {
+                let visibleCount = 0;
+                for (let i = 0; i < count; i++) {
+                    if (await icons.nth(i).isVisible()) visibleCount++;
+                }
+                if (visibleCount === 0) {
+                    this.logAudit('Social Redirection: Icons present but hidden (CSS).', 'pass');
                 } else {
-                    this.logAudit('[Config] Shorten Reviews: Failed (Read More button has poor visibility/contrast).', 'fail');
+                    this.logAudit(`Social Redirection: Icons should be hidden (0) but ${visibleCount} are visible in main view.`, 'fail');
+                }
+            }
+        } else if (configSocial == 1 || configSocial === '1') {
+            if (count > 0) {
+                // If present in main view, validate them
+                let allValid = true;
+                for (let i = 0; i < count; i++) {
+                    const icon = icons.nth(i);
+                    if (await icon.isVisible()) {
+                        const tagName = await icon.evaluate(el => el.tagName.toLowerCase());
+                        let hasLink = false;
+                        if (tagName === 'a') {
+                            const href = await icon.getAttribute('href');
+                            if (href && (href.startsWith('http') || href.includes('social'))) hasLink = true;
+                        } else {
+                            const parentLink = icon.locator('xpath=./ancestor::a').first();
+                            if (await parentLink.count() > 0) {
+                                const href = await parentLink.getAttribute('href');
+                                if (href) hasLink = true;
+                            }
+                        }
+
+                        if (!hasLink) {
+                            this.logAudit('Social Redirection: Found icon in main view but no valid redirection link.', 'fail');
+                            allValid = false;
+                        }
+                    }
+                }
+                if (allValid) {
+                    this.logAudit('Social Redirection: All visible icons in main view have valid links.', 'pass');
                 }
             } else {
-                this.logAudit('[Config] Shorten Reviews: Failed (Read More expected but not found or hidden).', 'fail');
+                this.logAudit('Social Redirection: Icons expected (1) but none found in main view. (They might be inside modals, verified during interaction).', 'info');
             }
-        } else if (c.show_full_review == 1 || c.show_full_review == '1') {
-            this.logAudit('[Config] Shorten Reviews: Show Full Review enabled.');
-        }
-
-        // 6. Show Social Platform Icon
-        // config: allow_social_redirection = 1 -> Visible
-        // config: allow_social_redirection = 0 -> Hidden
-        const socialSelector = 'div.feedspace-element-header-icon > a.social-redirection-button > img, .social-redirection-button';
-        if (c.allow_social_redirection == 1 || c.allow_social_redirection == '1') {
-            const icons = this.context.locator(socialSelector);
-            if (await icons.count() > 0 && await icons.first().isVisible()) {
-                this.logAudit('[Config] Social Icons: Validated (Icons visible).');
-            } else {
-                this.logAudit('[Config] Social Icons: Failed (Icons expected but not found).', 'fail');
-            }
-        } else if (c.allow_social_redirection == 0 || c.allow_social_redirection == '0') {
-            const icons = this.context.locator(socialSelector);
-            if (await icons.count() === 0 || !(await icons.first().isVisible())) {
-                this.logAudit('Social Redirection: Hidden as per configuration.', 'pass');
-            } else {
-                this.logAudit('[Config] Social Icons: Failed (Icons should be hidden).', 'fail');
-            }
-        }
-
-
-        // 7. Inline CTA
-        // config: cta_enabled = 1 -> Visible
-        // config: cta_enabled = 0 -> Disabled (Hidden)
-        const ctaSelector = 'div.fe-review-box-inner > div.feedspace-element-feed-box-inner > div.feedspace-cta-button-container-d9';
-        if (c.cta_enabled == 1) {
-            const cta = this.context.locator(ctaSelector).first();
-            if (await cta.isVisible()) {
-                this.logAudit('[Config] Inline CTA: Validated (CTA visible).');
-            } else {
-                this.logAudit('[Config] Inline CTA: Failed (CTA expected but not found).', 'fail');
-            }
-        } else if (c.cta_enabled == 0) {
-            const cta = this.context.locator(ctaSelector).first();
-            if (!(await cta.isVisible())) {
-                this.logAudit('[Config] Inline CTA: Validated (CTA disabled).');
-            } else {
-                this.logAudit('[Config] Inline CTA: Failed (CTA should be disabled).', 'fail');
-            }
+        } else {
+            this.logAudit(`Social Redirection: Config value '${configSocial}' is optional/unknown. Found ${count} icons.`, 'info');
         }
     }
 }

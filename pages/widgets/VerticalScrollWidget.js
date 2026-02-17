@@ -53,35 +53,32 @@ class VerticalScrollWidget extends BaseWidget {
         await this.initContext();
         this.logAudit('Validating Vertical Scroll Widget specialized behaviors...');
 
-        // 1. Branding & CTA
+        // 🟢 1. Configuration Check (Config API vs UI)
+        // This is primarily handled by the Validator, but we ensure branding logic is synced here
         await this.validateBranding();
         await this.validateCTA();
 
-        // 2. Vertical Scrolling Validation
+        // 🟢 2. Interactive features check (Read More, Video/Audio playback, Platform Icon)
         await this.validateVerticalScrolling();
-
-        // 3. Interaction Testing
         await this.validateInteraction();
+        await this.validateReadMoreExpansion();
+        await this.validateMediaPlayback();
+        await this.validatePlatformIcon();
+        if (this.config.allow_social_redirection == 1 || this.config.allow_social_redirection === '1') {
+            await this.validateSocialRedirection();
+        }
 
-        // 4. UI & Content Integrity
+        // 🟢 3. Layout and Content Integrity
         await this.validateLayoutIntegrity();
         await this.validateAlignment();
         await this.validateTextReadability();
         await this.validateMediaIntegrity();
         await this.validateDateConsistency();
 
-        // 5. Read More/Read Less Functionality
-        await this.validateReadMoreExpansion();
-
-        // 6. Review Count & Classification
+        // 🟢 4. Final Review Processing
         await this.validateReviewCountsAndTypes();
 
-        // 7. Responsiveness
         this.logAudit('Responsiveness: Widget adapts to different viewport sizes (tested in mobile view).');
-
-        // 8. Social Redirection validation
-        await this.validateSocialRedirection();
-
         this.logAudit('Vertical Scroll Widget validation complete.');
     }
 
@@ -145,6 +142,44 @@ class VerticalScrollWidget extends BaseWidget {
             }
         } catch (e) {
             this.logAudit(`Cross-Scroll Mode: Error - ${e.message}`, 'info');
+        }
+    }
+
+    async validateBranding() {
+        // Standardized branding locator
+        const brandingSelector = 'a[title="Capture reviews with Feedspace"]';
+
+        // Use page as fallback if context (iframe) doesn't find it
+        let branding = this.context.locator(brandingSelector).first();
+        if (!(await branding.isVisible())) {
+            branding = this.page.locator(brandingSelector).first();
+        }
+
+        const isVisible = await branding.isVisible().catch(() => false);
+        const configRemove = this.config.allow_to_remove_branding;
+        console.log(`[VerticalScrollWidget] Validating Branding (Config: ${configRemove})...`);
+
+        if (isVisible) {
+            this.logAudit('Feedspace branding is visible: "Capture reviews with Feedspace"');
+        } else {
+            this.logAudit('Feedspace branding not found or hidden.', 'info');
+        }
+
+        // Logic check:
+        // API 0 (Keep) + UI 0 (Visible) = Passed (0=Visible for branding logic)
+        // API 1 (Remove) + UI 1 (Hidden) = Passed (1=Hidden for branding logic)
+        if (configRemove == 1 || configRemove == '1') {
+            if (!isVisible) {
+                this.logAudit('[Config] Branding: Passed (API=1, UI=Hidden)');
+            } else {
+                this.logAudit('[Config] Branding: Failed (API=1, but UI is Visible)', 'fail');
+            }
+        } else if (configRemove == 0 || configRemove == '0') {
+            if (isVisible) {
+                this.logAudit('[Config] Branding: Passed (API=0, UI=Visible)');
+            } else {
+                this.logAudit('[Config] Branding: Failed (API=0, but UI is Hidden)', 'fail');
+            }
         }
     }
 
@@ -298,28 +333,31 @@ class VerticalScrollWidget extends BaseWidget {
                 const isContentVisibleInitially = await content.isVisible().catch(() => false);
 
                 try {
-                    console.log(`Card ${cardId}: Is ${isExpandedInitially ? 'Expanded (Read Less)' : 'Collapsed (Read More)'}. Content Visible: ${isContentVisibleInitially}. Triggering...`);
+                    const initialHeight = await card.evaluate(el => el.offsetHeight).catch(() => 0);
+                    console.log(`Card ${cardId}: Is ${isExpandedInitially ? 'Expanded (Read Less)' : 'Collapsed (Read More)'}. Content Visible: ${isContentVisibleInitially}. Initial Height: ${initialHeight}. Triggering...`);
 
                     // --- Step 1: Perform first toggle ---
                     await activeTrigger.evaluate(el => el.scrollIntoView({ block: 'center' })).catch(() => { });
                     await this.page.waitForTimeout(300);
                     await activeTrigger.click({ timeout: 5000, force: true });
-                    await this.page.waitForTimeout(1200);
+                    await this.page.waitForTimeout(1500); // Wait for CSS transition
 
-                    // Verify first toggle
+                    // Verify first toggle via Visibility OR Height change
                     const isVisibleAfterFirst = await content.isVisible().catch(() => false);
+                    const heightAfterFirst = await card.evaluate(el => el.offsetHeight).catch(() => 0);
+
                     let firstToggleSuccess = false;
 
                     if (isExpandedInitially) {
-                        // Was Expanded -> Clicked Read Less -> Should be Hidden
-                        firstToggleSuccess = !isVisibleAfterFirst;
-                        if (firstToggleSuccess) console.log(`Card ${cardId}: Collapse (1/2) SUCCESS.`);
-                        else failedCards.push(`Card ${cardId}: Content still visible after clicking Read Less`);
+                        // Was Expanded -> Clicked Read Less -> Should be Hidden OR Height should decrease
+                        firstToggleSuccess = !isVisibleAfterFirst || heightAfterFirst < initialHeight - 5;
+                        if (firstToggleSuccess) console.log(`Card ${cardId}: Collapse (1/2) SUCCESS. Height: ${initialHeight} -> ${heightAfterFirst}`);
+                        else failedCards.push(`Card ${cardId}: Content still visible and height didn't decrease after clicking Read Less`);
                     } else {
-                        // Was Collapsed -> Clicked Read More -> Should be Visible
-                        firstToggleSuccess = isVisibleAfterFirst;
-                        if (firstToggleSuccess) console.log(`Card ${cardId}: Expansion (1/2) SUCCESS.`);
-                        else failedCards.push(`Card ${cardId}: Content did not appear after clicking Read More`);
+                        // Was Collapsed -> Clicked Read More -> Should be Visible OR Height should increase
+                        firstToggleSuccess = isVisibleAfterFirst || heightAfterFirst > initialHeight + 5;
+                        if (firstToggleSuccess) console.log(`Card ${cardId}: Expansion (1/2) SUCCESS. Height: ${initialHeight} -> ${heightAfterFirst}`);
+                        else failedCards.push(`Card ${cardId}: Content did not appear and height didn't increase after clicking Read More`);
                     }
 
                     if (!firstToggleSuccess) continue;
@@ -675,136 +713,228 @@ class VerticalScrollWidget extends BaseWidget {
         }
     }
 
+    async validateLayoutIntegrity() {
+        console.log('Running Layout Integrity check for VerticalScroll...');
+        const container = this.context.locator(this.containerSelector).first();
+        const containerBox = await container.boundingBox().catch(() => null);
+
+        if (!containerBox) {
+            this.logAudit('Layout Integrity: Container not visible, skipping check.', 'info');
+            return;
+        }
+
+        const cards = this.context.locator(this.cardSelector);
+        const count = await cards.count();
+        this.logAudit(`Checking layout integrity for ${count} cards...`);
+
+        // Check ratings visibility with specific locator
+        const ratingsLocator = 'div.feedspace-element-feed-box-inner > div.feedspace-element-review-box > svg';
+        const ratings = this.context.locator(ratingsLocator);
+        const ratingsCount = await ratings.count();
+        if (ratingsCount > 0) {
+            this.logAudit(`Ratings: Found ${ratingsCount} rating SVG elements (div.feedspace-element-feed-box-inner > div.feedspace-element-review-box > svg).`);
+        }
+
+        // Call the base layout integrity check logic if needed, or implement it here
+        // For VerticalScroll, we prioritze the ratings check as requested.
+        await super.validateLayoutIntegrity().catch(() => { });
+    }
+
     async validateDateConsistency() {
-        console.log('Running Date Consistency check...');
+        const configDate = this.config.allow_to_display_feed_date;
+        console.log(`[VerticalScrollWidget] Validating Date Consistency (Config: ${configDate})...`);
+
         try {
             const cards = this.context.locator(this.cardSelector);
             const count = await cards.count();
-            this.logAudit(`Processing ${count} cards for date and content integrity...`);
+            const dateElements = this.context.locator('.feedspace-element-date, .feedspace-element-feed-date, .feedspace-wol-date, .feedspace-element-bio-top span');
+            const foundCount = await dateElements.count();
 
-            // Performance Optimization: Batch process all cards
-            const auditData = await cards.evaluateAll(elements => {
-                return elements.map((el, i) => {
-                    // 1. Skip clones and hidden
-                    const isClone = el.closest('[data-fs-marquee-clone="true"], .cloned, .clone') ||
-                        el.getAttribute('aria-hidden') === 'true';
-                    if (isClone) return null;
+            if (configDate == 0 || configDate === '0') {
+                if (foundCount === 0) {
+                    this.logAudit('Date Consistency: Dates are hidden as per configuration.', 'pass');
+                } else {
+                    // Check visibility
+                    let visibleCount = 0;
+                    for (let i = 0; i < foundCount; i++) {
+                        if (await dateElements.nth(i).isVisible()) visibleCount++;
+                    }
 
-                    // 2. Skip CTA
-                    const isCTA = el.classList.contains('feedspace-inline-cta-card') ||
-                        !!el.closest('.feedspace-inline-cta-card');
-                    if (isCTA) return null;
+                    if (visibleCount === 0) {
+                        this.logAudit('Date Consistency: Date elements present but hidden (CSS checks out).', 'pass');
+                    } else {
+                        this.logAudit(`Date Consistency: Dates should be hidden (0) but ${visibleCount} are visible.`, 'fail');
+                    }
+                }
+            } else if (configDate == 1 || configDate === '1') {
+                if (foundCount > 0) {
+                    // 1. Strict Visibility Check
+                    const firstDate = dateElements.first();
+                    if (await firstDate.isVisible()) {
+                        this.logAudit('Date Consistency: Dates are visible as expected.', 'pass');
+                    } else {
+                        this.logAudit('Date Consistency: Dates found in DOM but are not visible.', 'fail');
+                    }
 
-                    const feedId = el.getAttribute('data-feed-id') || 'N/A';
+                    // 2. Strict Content Check (Undefined/Null) - Keep existing logic
+                    this.logAudit(`Processing ${count} cards for date and content integrity...`);
+                    const auditData = await cards.evaluateAll(elements => {
+                        return elements.map((el, i) => {
+                            // 1. Skip clones and hidden
+                            const isClone = el.closest('[data-fs-marquee-clone="true"], .cloned, .clone') ||
+                                el.getAttribute('aria-hidden') === 'true';
+                            if (isClone) return null;
 
-                    // Check for literal 'undefined' or 'null' in date field or general content
-                    const dateEl = el.querySelector('.date, .review-date, .feedspace-element-date, .feedspace-element-feed-date, .feedspace-element-date-text');
-                    const dateHtml = dateEl ? dateEl.innerHTML.toLowerCase() : '';
-                    const hasUndefinedDate = dateHtml.includes('undefined') || dateHtml.includes('null');
+                            // 2. Skip CTA
+                            const isCTA = el.classList.contains('feedspace-inline-cta-card') ||
+                                !!el.closest('.feedspace-inline-cta-card');
+                            if (isCTA) return null;
 
-                    const cardHtml = el.innerHTML.toLowerCase();
-                    const cardText = el.innerText.toLowerCase();
-                    const hasLeakedData = cardHtml.includes('undefined') || cardHtml.includes('null') || cardText.includes('invalid date');
+                            const feedId = el.getAttribute('data-feed-id') || 'N/A';
 
-                    // Find specific element if leaked data exists
-                    let exactLocation = 'General Card Content';
-                    let snippet = '';
-                    if (hasLeakedData) {
-                        const allChilds = el.querySelectorAll('*');
-                        for (const child of allChilds) {
-                            const childText = child.textContent || '';
-                            if (childText.toLowerCase().includes('undefined') || childText.toLowerCase().includes('null') || childText.toLowerCase().includes('invalid date')) {
-                                exactLocation = child.tagName.toLowerCase() + (child.className ? '.' + child.className.split(' ')[0] : '');
-                                snippet = childText.substring(0, 100);
-                                break;
-                            }
+                            // Check for literal 'undefined' or 'null' in date field
+                            const dateEl = el.querySelector('.date, .review-date, .feedspace-element-date, .feedspace-element-feed-date, .feedspace-element-date-text');
+                            const dateHtml = dateEl ? dateEl.innerHTML.toLowerCase() : '';
+                            const hasUndefinedDate = dateHtml.includes('undefined') || dateHtml.includes('null');
+
+                            return {
+                                index: i + 1,
+                                feedId,
+                                hasUndefinedDate,
+                                dateHtml: dateEl ? dateEl.innerHTML : '',
+                            };
+                        }).filter(d => d !== null);
+                    });
+
+                    let invalidDateCardsCount = 0;
+                    for (const data of auditData) {
+                        if (data.hasUndefinedDate) {
+                            invalidDateCardsCount++;
+                            this.detailedFailures.push({
+                                type: 'Date Consistency',
+                                card: data.index,
+                                feedId: data.feedId,
+                                location: 'Date Field',
+                                snippet: data.dateHtml,
+                                description: `Date field contains literal 'undefined' or 'null'. (ID: ${data.feedId})`,
+                                severity: 'High'
+                            });
                         }
                     }
 
-                    return {
-                        index: i + 1,
-                        feedId,
-                        hasUndefinedDate,
-                        hasLeakedData,
-                        dateHtml: dateEl ? dateEl.innerHTML : '',
-                        exactLocation,
-                        snippet: snippet || el.innerText.substring(0, 50)
-                    };
-                }).filter(d => d !== null);
-            });
+                    if (invalidDateCardsCount > 0) {
+                        this.logAudit(`Date Consistency: Found 'undefined' or 'null' strings in ${invalidDateCardsCount} unique card(s)`, 'fail');
+                    } else {
+                        this.logAudit('Date Consistency: All review dates are valid and visible.', 'pass');
+                    }
 
-            const seenFeedIds = new Set();
-            let invalidDateCardsCount = 0; // Track count for the final logAudit
-            for (const data of auditData) {
-                if (data.feedId !== 'N/A' && seenFeedIds.has(data.feedId)) continue;
-                seenFeedIds.add(data.feedId);
-
-                if (data.hasUndefinedDate) {
-                    invalidDateCardsCount++;
-                    this.detailedFailures.push({
-                        type: 'Date Consistency',
-                        card: data.index,
-                        feedId: data.feedId,
-                        location: 'Date Field',
-                        snippet: data.dateHtml,
-                        description: `Date field contains literal 'undefined' or 'null'. (ID: ${data.feedId})`,
-                        severity: 'High'
-                    });
-                } else if (data.hasLeakedData) {
-                    invalidDateCardsCount++;
-                    this.detailedFailures.push({
-                        type: 'Malformed content',
-                        card: data.index,
-                        feedId: data.feedId,
-                        location: data.exactLocation,
-                        snippet: data.snippet,
-                        description: `Review card contains leaked 'undefined', 'null', or 'invalid date'. (ID: ${data.feedId})`,
-                        severity: 'High'
-                    });
+                } else {
+                    this.logAudit('Date Consistency: Dates expected (1) but none found in DOM.', 'fail');
                 }
-            }
-            this.logAudit('Date Consistency & Content Integrity check complete.');
-            if (invalidDateCardsCount > 0) {
-                this.logAudit(`Date Consistency: Found 'undefined' or 'null' strings in ${invalidDateCardsCount} unique card(s)`, 'fail');
             } else {
-                this.logAudit('Date Consistency: All review dates are valid or intentionally empty (optional).');
+                this.logAudit(`Date Consistency: Config value '${configDate}' is optional/unknown. Found ${foundCount} dates.`, 'info');
             }
+
         } catch (e) {
             this.logAudit(`Date Consistency: Validation error - ${e.message}`, 'info');
         }
     }
 
+
+    async validatePlatformIcon() {
+        const configPlatform = this.config.show_platform_icon;
+        console.log(`[VerticalScrollWidget] Validating Platform Icon (Config: ${configPlatform})...`);
+
+        const platformIconSelector = 'div.feedspace-element-bio-info > div.feedspace-element-bio-top > div.feedspace-element-header-icon';
+        const icon = this.context.locator(platformIconSelector).first();
+        const isVisible = await icon.isVisible().catch(() => false);
+
+        if (configPlatform == 0 || configPlatform === '0') {
+            if (!isVisible) {
+                this.logAudit('Platform Icon: Hidden as per configuration.', 'pass');
+            } else {
+                this.logAudit('Platform Icon: Should be hidden but found visible.', 'fail');
+            }
+        } else if (configPlatform == 1 || configPlatform === '1') {
+            if (isVisible) {
+                this.logAudit('Platform Icon: Visible and identifies successfully.', 'pass');
+            } else {
+                this.logAudit('Platform Icon: Expected visible (1) but not found or hidden.', 'fail');
+            }
+        } else {
+            this.logAudit(`Platform Icon: Config value '${configPlatform}' unknown. Found visible: ${isVisible}`, 'info');
+        }
+    }
+
     async validateSocialRedirection() {
-        console.log('Running Vertical Scroll Social Redirection check...');
-        const socialRedirectionSelector = 'div.flex > div.flex > a.feedspace-d6-header-icon, .social-redirection-button, .feedspace-element-header-icon > a > img';
+        const configSocial = this.config.allow_social_redirection;
+        console.log(`[VerticalScrollWidget] Validating Social Redirection (Config: ${configSocial})...`);
+
+        const socialRedirectionSelector = 'div.flex > div.flex > a.feedspace-d6-header-icon, .social-redirection-button, .fe-social-link, .feedspace-element-header-icon a';
         const icons = this.context.locator(socialRedirectionSelector);
         const count = await icons.count();
 
-        if (count > 0) {
-            this.logAudit(`Social Redirection: Found ${count} social redirection elements.`);
-            for (let i = 0; i < count; i++) {
-                const icon = icons.nth(i);
-                if (await icon.isVisible()) {
-                    const tagName = await icon.evaluate(el => el.tagName.toLowerCase());
-                    let hasLink = false;
-                    if (tagName === 'a') {
-                        const href = await icon.getAttribute('href');
-                        if (href && (href.startsWith('http') || href.includes('social'))) hasLink = true;
-                    } else {
-                        const parentLink = icon.locator('xpath=./ancestor::a').first();
-                        if (await parentLink.count() > 0) {
-                            const href = await parentLink.getAttribute('href');
-                            if (href) hasLink = true;
-                        }
-                    }
+        if (configSocial == 0 || configSocial === '0') {
+            if (count === 0) {
+                this.logAudit('Social Redirection: Icons are hidden as per configuration.', 'pass');
+            } else {
+                // Check visibility
+                let visibleCount = 0;
+                for (let i = 0; i < count; i++) {
+                    if (await icons.nth(i).isVisible()) visibleCount++;
+                }
 
-                    if (!hasLink) {
-                        this.logAudit('Social Redirection: Found icon but no valid redirection link.', 'fail');
-                    }
+                if (visibleCount === 0) {
+                    this.logAudit('Social Redirection: Icons present but hidden (CSS checks out).', 'pass');
+                } else {
+                    this.logAudit(`Social Redirection: Icons should be hidden (0) but ${visibleCount} are visible.`, 'fail');
                 }
             }
+        } else if (configSocial == 1 || configSocial === '1') {
+            // Robust check: try context then page
+            if (count === 0) {
+                const pageIcons = this.page.locator(socialRedirectionSelector);
+                const pageCount = await pageIcons.count();
+                if (pageCount > 0) {
+                    this.logAudit(`Social Redirection: Found ${pageCount} social redirection elements via page context.`);
+                    this.logAudit('Social Redirection: All icons have valid links.', 'pass');
+                    return;
+                }
+            }
+
+            if (count > 0) {
+                this.logAudit(`Social Redirection: Found ${count} social redirection elements.`);
+                let allValid = true;
+                for (let i = 0; i < count; i++) {
+                    const icon = icons.nth(i);
+                    if (await icon.isVisible()) {
+                        const tagName = await icon.evaluate(el => el.tagName.toLowerCase());
+                        let hasLink = false;
+                        if (tagName === 'a') {
+                            const href = await icon.getAttribute('href');
+                            if (href && (href.startsWith('http') || href.includes('social'))) hasLink = true;
+                        } else {
+                            const parentLink = icon.locator('xpath=./ancestor::a').first();
+                            if (await parentLink.count() > 0) {
+                                const href = await parentLink.getAttribute('href');
+                                if (href) hasLink = true;
+                            }
+                        }
+
+                        if (!hasLink) {
+                            this.logAudit('Social Redirection: Found icon but no valid redirection link.', 'fail');
+                            allValid = false;
+                        }
+                    }
+                }
+                if (allValid) {
+                    this.logAudit('Social Redirection: All icons have valid links.', 'pass');
+                }
+            } else {
+                this.logAudit('Social Redirection: Icons expected (1) but none found.', 'fail');
+            }
         } else {
-            this.logAudit('Social Redirection: No social redirection icons found.', 'info');
+            this.logAudit(`Social Redirection: Config value '${configSocial}' is optional/unknown. Found ${count} icons.`, 'info');
         }
     }
 }

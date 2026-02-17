@@ -17,96 +17,63 @@ class AvatarSliderValidator {
         };
     }
 
-    logAudit(message, status = 'info') {
-        this.reportData.auditLog.push({ message, status });
+    logAudit(message, status = 'info', isLimitation = false) {
+        this.reportData.auditLog.push({ message, status, isLimitation });
         console.log(`[AvatarSliderValidator] ${status.toUpperCase()}: ${message}`);
     }
 
     async runFullAudit() {
         try {
             this.logAudit('Starting full Avatar Slider audit...');
-
             await this.widget.initContext();
+            this.reportData.url = this.page.url();
+
+            // 0️⃣ Validate Visibility (Counts reviews & populates stats)
+            await this.widget.validateVisibility().catch(e => this.logAudit(`Visibility failed: ${e.message}`, 'fail'));
 
             // 1️⃣ API JSON → UI mapping
-            await this.validateConfigAgainstUI();
+            await this.validateConfigAgainstUI().catch(e => this.logAudit(`Config mapping failed: ${e.message}`, 'fail'));
 
             // 2️⃣ Unique behaviors & interactions
-            await this.widget.validateUniqueBehaviors();
-
-            // 3️⃣ Media integrity checks
-            await this.widget.validateMediaIntegrity();
-
-            // 4️⃣ Layout checks
-            await this.widget.validateLayoutIntegrity();
-
-            // 5️⃣ Accessibility
-            await this.widget.runAccessibilityAudit();
+            await this.widget.validateUniqueBehaviors().catch(e => this.logAudit(`Unique behaviors failed: ${e.message}`, 'fail'));
 
             this.logAudit('Avatar Slider audit complete.');
         } catch (e) {
-            this.logAudit(`Audit failed due to exception: ${e.message}`, 'fail');
+            this.logAudit(`Critical audit exception: ${e.message}`, 'fail');
+        } finally {
+            // ALWAYS merge data from widget
+            this.reportData.reviewStats = this.widget.reviewStats || {};
+            this.reportData.detailedFailures = this.widget.detailedFailures || [];
+            this.reportData.accessibilityResults = this.widget.accessibilityResults || [];
+
+            if (this.widget.auditLog && this.widget.auditLog.length > 0) {
+                const mappedLogs = this.widget.auditLog.map(log => ({
+                    message: log.message,
+                    status: log.type || (log.status ? log.status : 'info'),
+                    isLimitation: log.isLimitation || false
+                }));
+                this.reportData.auditLog.push(...mappedLogs);
+            }
         }
     }
 
     async validateConfigAgainstUI() {
-        const configKeys = [
-            'is_show_ratings', 'show_full_review', 'allow_to_display_feed_date',
-            'allow_social_redirection', 'cta_enabled', 'hideBranding',
-            'allow_to_remove_branding', 'show_platform_icon'
-        ];
+        // Instantiate the config checker to use its synchronized locators and logic
+        const { AvatarSliderConfig } = require('../configs/AvatarSliderConfig');
+        const configChecker = new AvatarSliderConfig(this.widget.context, this.config);
+        const configReport = await configChecker.generateFeatureReport();
 
-        for (const key of configKeys) {
-            const apiValue = this.config[key] ?? 'N/A';
-            let uiValue = 'N/A';
-
-            try {
-                let locator;
-                switch (key) {
-                    case 'is_show_ratings':
-                        locator = this.widget.context.locator('.feedspace-stars, .star-rating');
-                        break;
-                    case 'show_full_review':
-                        locator = this.widget.context.locator('.feedspace-element-read-more, .read-more');
-                        break;
-                    case 'allow_to_display_feed_date':
-                        locator = this.widget.context.locator('.feedspace-element-date');
-                        break;
-                    case 'allow_social_redirection':
-                        locator = this.widget.context.locator('.social-redirection-button');
-                        break;
-                    case 'cta_enabled':
-                        locator = this.widget.context.locator('.feedspace-cta-content');
-                        break;
-                    case 'hideBranding':
-                    case 'allow_to_remove_branding':
-                        locator = this.widget.context.locator('a[href*="utm_source=powered-by-feedspace"]');
-                        break;
-                    case 'show_platform_icon':
-                        locator = this.widget.context.locator('div.feedspace-element-header-icon > a > img');
-                        break;
-                }
-
-                if (locator) {
-                    uiValue = await locator.first().isVisible().catch(() => false) ? "1" : "0";
-                }
-            } catch (e) {
-                uiValue = 'error';
-            }
-
-            const status = apiValue.toString() === uiValue.toString() ? 'PASS' : 'FAIL';
+        // Map configChecker results to validator's reportData
+        for (const res of configReport) {
             this.reportData.featureResults.push({
-                feature: key,
-                api_value: apiValue,
-                ui_value: uiValue,
-                status
+                feature: res.feature,
+                api_value: res.api_value,
+                ui_value: res.ui_value,
+                status: res.status
             });
 
-            if (status === 'FAIL') {
-                this.logAudit(`Feature: ${key}, API: ${apiValue}, UI: ${uiValue}, Status: FAIL`, 'fail');
-            } else {
-                this.logAudit(`Feature: ${key}, API: ${apiValue}, UI: ${uiValue}, Status: PASS`, 'info');
-            }
+            const logStatus = res.status === 'PASS' ? 'info' : 'fail';
+            this.logAudit(`Feature: ${res.feature}, API: ${res.api_value}, UI: ${res.ui_value}, Status: ${res.status}${res.info ? ` (${res.info})` : ''}`, logStatus);
         }
     }
 

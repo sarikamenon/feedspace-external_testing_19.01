@@ -5,9 +5,12 @@ class StripSliderWidget extends BaseWidget {
     constructor(page, config) {
         super(page, config);
         // Specific parent class provided by user
-        this.containerSelector = '.feedspace-element-container.feedspace-marque-main-wrap.feedspace-show-overlay.feedspace-shadow-blurred-2';
-        // Column container provided by user
-        this.columnContainerSelector = 'div.feedspace-embed > div.feedspace-element-container > div.feedspace-marque-main';
+        // Specific parent class provided by user - Relaxed for better resilience
+        this.containerSelector = '.feedspace-marque-main-wrap, .feedspace-show-overlay, .feedspace-element-container.feedspace-marque-main-wrap';
+        // Column container provided by user - Relaxed to handle various nesting
+        this.columnContainerSelector = '.feedspace-marque-main, div.feedspace-embed > div.feedspace-element-container > div.feedspace-marque-main';
+        this.ctaSelector = '.feedspace-cta-button-container-d8, .feedspace-cta-button-container-d9, .feedspace-cta-content';
+        this.ctaFound = false; // Tracking discovery across interactions
     }
 
     async validateReviewCountsAndTypes() {
@@ -111,14 +114,73 @@ class StripSliderWidget extends BaseWidget {
     // Override validateDateConsistency to check only unique cards
     async validateDateConsistency() {
         await this.configureSelectors();
-        this.logAudit('Validating Strip Slider date consistency (unique cards only)...');
+        const configDate = this.config.allow_to_display_feed_date;
+        console.log(`[StripSliderWidget] Validating Date Consistency (Config: ${configDate})...`);
+
         const uniqueCards = await this.getUniqueCards();
-        for (let i = 0; i < uniqueCards.length; i++) {
-            const text = await uniqueCards[i].innerText();
-            const html = await uniqueCards[i].innerHTML();
-            if (text.toLowerCase().includes('undefined') || text.toLowerCase().includes('null') ||
-                html.toLowerCase().includes('undefined') || html.toLowerCase().includes('null')) {
-                this.logAudit(`Date Consistency: Found 'undefined' or 'null' strings in unique card #${i + 1}`, 'fail', uniqueCards[i]);
+        this.logAudit(`Date Consistency: Checking ${uniqueCards.length} unique cards.`);
+
+        if (configDate == 0 || configDate === '0') {
+            // In Strip Slider, if hidden, they might be truly hidden or DOM absent
+            // We check visibility on unique cards
+            let visibleCount = 0;
+            for (const card of uniqueCards) {
+                const dateEl = card.locator('.feedspace-element-date, .feedspace-wol-date, .feedspace-element-bio-top span');
+                if (await dateEl.count() > 0 && await dateEl.isVisible()) {
+                    visibleCount++;
+                }
+            }
+
+            if (visibleCount === 0) {
+                this.logAudit('Date Consistency: Dates are hidden as per configuration.', 'pass');
+            } else {
+                this.logAudit(`Date Consistency: Dates should be hidden (0) but ${visibleCount} unique cards have visible dates.`, 'fail');
+            }
+
+        } else if (configDate == 1 || configDate === '1') {
+            if (uniqueCards.length > 0) {
+                let invalidCount = 0;
+                let visibleCheckPassed = false;
+
+                for (let i = 0; i < uniqueCards.length; i++) {
+                    const card = uniqueCards[i];
+                    const text = await card.innerText().catch(() => '');
+
+                    // Strict content check
+                    if (text.toLowerCase().includes('undefined') || text.toLowerCase().includes('null')) {
+                        invalidCount++;
+                        this.logAudit(`Date Consistency: Found 'undefined' or 'null' in unique card #${i + 1}`, 'fail');
+                    }
+
+                    // Visibility check (at least one should be visible if config is 1)
+                    // In Strip Slider (Marquee), items might be off-screen, but some should be visible
+                    const dateEl = card.locator('.feedspace-element-date, .feedspace-wol-date, .feedspace-element-bio-top span').first();
+                    if (await dateEl.isVisible()) {
+                        visibleCheckPassed = true;
+                    }
+                }
+
+                if (invalidCount === 0) {
+                    if (visibleCheckPassed) {
+                        this.logAudit(`Date Consistency: All ${uniqueCards.length} unique cards have valid dates, and visibility confirmed.`, 'pass');
+                    } else {
+                        this.logAudit('Date Consistency: Dates valid but none currently visible (might be scrolling off-screen).', 'info');
+                    }
+                } else {
+                    this.logAudit(`Date Consistency: Found ${invalidCount} cards with invalid date strings.`, 'fail');
+                }
+
+            } else {
+                this.logAudit('Date Consistency: No unique cards found to validate.', 'info');
+            }
+        } else {
+            this.logAudit(`Date Consistency: Config value '${configDate}' is optional/unknown. Checking content only.`, 'info');
+            // Fallback to old check
+            for (let i = 0; i < uniqueCards.length; i++) {
+                const text = await uniqueCards[i].innerText();
+                if (text.toLowerCase().includes('undefined') || text.toLowerCase().includes('null')) {
+                    this.logAudit(`Date Consistency: Found 'undefined' or 'null' strings in unique card #${i + 1}`, 'fail');
+                }
             }
         }
     }
@@ -174,9 +236,16 @@ class StripSliderWidget extends BaseWidget {
         // 4. Media & Branding
         await this.validateMediaIntegrity();
         await this.validateBranding();
-        await this.validateSocialRedirection();
+        if (this.config.allow_social_redirection == 1 || this.config.allow_social_redirection === '1') {
+            await this.validateSocialRedirection();
+        }
 
-        // 5. Accessibility
+        // 5. CTA Check
+        if (this.config.cta_enabled == 1 || this.config.cta_enabled === '1') {
+            await this.validateCTA();
+        }
+
+        // 6. Accessibility
         await this.runAccessibilityAudit();
 
         this.logAudit('Strip Slider audit complete.', 'info');
@@ -241,6 +310,13 @@ class StripSliderWidget extends BaseWidget {
                     popupOpened = true;
                     this.logAudit('Popup opened successfully after clicking review card.', 'pass');
 
+                    // Check for CTA inside the modal as per user feedback
+                    const ctaInModal = modal.locator(this.ctaSelector).first();
+                    if (await ctaInModal.isVisible()) {
+                        this.ctaFound = true;
+                        this.logAudit('CTA Button: Detected inside the review modal.', 'pass');
+                    }
+
                     const trigger = modal.locator('span:has-text("Read More")').first();
                     if (await trigger.isVisible()) {
                         this.logAudit('[Read More] Found trigger inside popup. Clicking...', 'pass');
@@ -279,22 +355,82 @@ class StripSliderWidget extends BaseWidget {
     }
 
     async validateSocialRedirection() {
-        const selector = 'div.feedspace-review-bio-info > div.feedspace-element-header-icon > a, div.feedspace-element-bio-info > div.feedspace-element-bio-top > div.feedspace-element-header-icon';
-        const icon = this.context.locator(selector).first();
+        const configSocial = this.config.allow_social_redirection;
+        console.log(`[StripSliderWidget] Validating Social Redirection (Config: ${configSocial})...`);
 
-        // Use a slight wait and check for count/presence as well as visibility
-        const isVisible = await icon.isVisible().catch(() => false);
-        const exists = (await icon.count()) > 0;
+        const socialRedirectionSelector = 'div.feedspace-review-bio-info > div.feedspace-element-header-icon > a, div.feedspace-element-bio-info > div.feedspace-element-bio-top > div.feedspace-element-header-icon, .feedspace-element-header-icon a';
+        const icons = this.context.locator(socialRedirectionSelector);
+        const count = await icons.count();
 
-        if (isVisible || exists) {
-            const hasLink = await icon.locator('a').count() > 0 || await icon.evaluate(el => el.closest('a') !== null).catch(() => false);
-            if (hasLink) {
-                this.logAudit('[Social Redirection] Verified: Social icon detected and has redirection link.', 'pass');
+        if (configSocial == 0 || configSocial === '0') {
+            if (count === 0) {
+                this.logAudit('Social Redirection: Icons are hidden as per configuration.', 'pass');
             } else {
-                this.logAudit('[Social Redirection] Icon detected but no redirection link found.', 'fail');
+                // Check visibility
+                let visibleCount = 0;
+                for (let i = 0; i < count; i++) {
+                    if (await icons.nth(i).isVisible()) visibleCount++;
+                }
+
+                if (visibleCount === 0) {
+                    this.logAudit('Social Redirection: Icons present but hidden (CSS checks out).', 'pass');
+                } else {
+                    this.logAudit(`Social Redirection: Icons should be hidden (0) but ${visibleCount} are visible.`, 'fail');
+                }
+            }
+        } else if (configSocial == 1 || configSocial === '1') {
+            if (count > 0) {
+                this.logAudit(`Social Redirection: Found ${count} social redirection elements.`);
+                let allValid = true;
+                for (let i = 0; i < count; i++) {
+                    const icon = icons.nth(i);
+                    const isVisible = await icon.isVisible().catch(() => false);
+                    if (isVisible) {
+                        const tagName = await icon.evaluate(el => el.tagName.toLowerCase());
+                        let hasLink = false;
+                        if (tagName === 'a') {
+                            const href = await icon.getAttribute('href');
+                            if (href && (href.startsWith('http') || href.includes('social'))) hasLink = true;
+                        } else {
+                            // Check if it's wrapped in an <a> or has one inside
+                            const parentLink = icon.locator('xpath=./ancestor::a').first();
+                            if (await parentLink.count() > 0) hasLink = true;
+
+                            // StripSlider specific: sometimes the div IS the icon but link is child or parent
+                            if (!hasLink) {
+                                const childLink = icon.locator('a').first();
+                                if (await childLink.count() > 0) hasLink = true;
+                            }
+                        }
+
+                        if (!hasLink) {
+                            this.logAudit('Social Redirection: Found icon but no valid redirection link.', 'fail');
+                            allValid = false;
+                        }
+                    }
+                }
+                if (allValid) {
+                    this.logAudit('Social Redirection: All icons have valid links.', 'pass');
+                }
+            } else {
+                this.logAudit('Social Redirection: Icons expected (1) but none found.', 'fail');
             }
         } else {
-            this.logAudit('Social Redirection: No social icons found in the current view.', 'info');
+            this.logAudit(`Social Redirection: Config value '${configSocial}' is optional/unknown. Found ${count} icons.`, 'info');
+        }
+    }
+
+    async validateCTA() {
+        console.log('[StripSliderWidget] Validating CTA Visibility...');
+
+        // Check inline (main view)
+        const ctaInline = this.context.locator(this.ctaSelector).first();
+        const isCurrentlyVisible = await ctaInline.isVisible();
+
+        if (this.ctaFound || isCurrentlyVisible) {
+            this.logAudit(`CTA Button: ${this.ctaFound ? 'Validated inside modal' : 'Visible in main view'}.`, 'pass');
+        } else {
+            this.logAudit('CTA Button: Expected but NOT detected in main view or modals.', 'fail');
         }
     }
 }

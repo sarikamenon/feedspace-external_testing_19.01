@@ -103,126 +103,126 @@ class BaseWidget {
         }
     }
 
-    async validateBranding() {
-        const branding = this.context.locator(this.brandingSelector).first();
-        if (await branding.isVisible()) {
-            this.logAudit('Feedspace branding is visible: "Capture reviews with Feedspace"');
-        } else {
-            this.logAudit('Feedspace branding not found or hidden.', 'info');
-        }
-    }
+    // async validateBranding() {
+    //     const branding = this.context.locator(this.brandingSelector).first();
+    //     if (await branding.isVisible()) {
+    //         this.logAudit('Feedspace branding is visible: "Capture reviews with Feedspace"');
+    //     } else {
+    //         this.logAudit('Feedspace branding not found or hidden.', 'info');
+    //     }
+    // }
 
-    async validateCTA() {
-        const cta = this.context.locator(this.ctaSelector).first();
-        if (await cta.isVisible()) {
-            this.logAudit('Inline CTA found: .feedspace-cta-content');
-        } else {
-            this.logAudit('No Inline CTA (.feedspace-cta-content) found on this widget.', 'info');
-        }
-    }
+    // async validateCTA() {
+    //     const cta = this.context.locator(this.ctaSelector).first();
+    //     if (await cta.isVisible()) {
+    //         this.logAudit('Inline CTA found: .feedspace-cta-content');
+    //     } else {
+    //         this.logAudit('No Inline CTA (.feedspace-cta-content) found on this widget.', 'info');
+    //     }
+    // }
 
-    async validateDateConsistency() {
-        console.log('Running Date Consistency check...');
-        const cards = this.context.locator(this.cardSelector);
-        const count = await cards.count();
-        let invalidDateCards = [];
+    // async validateDateConsistency() {
+    //     console.log('Running Date Consistency check...');
+    //     const cards = this.context.locator(this.cardSelector);
+    //     const count = await cards.count();
+    //     let invalidDateCards = [];
 
-        for (let i = 0; i < count; i++) {
-            const card = cards.nth(i);
-            const feedId = await card.getAttribute('data-feed-id') || 'N/A';
+    //     for (let i = 0; i < count; i++) {
+    //         const card = cards.nth(i);
+    //         const feedId = await card.getAttribute('data-feed-id') || 'N/A';
 
-            // Capture selector for identification
-            const cardSelector = await card.evaluate(el => {
-                let s = el.tagName.toLowerCase();
-                if (el.id) s += '#' + el.id;
-                else if (el.className) s += '.' + el.className.split(' ').join('.');
-                return s;
-            });
+    //         // Capture selector for identification
+    //         const cardSelector = await card.evaluate(el => {
+    //             let s = el.tagName.toLowerCase();
+    //             if (el.id) s += '#' + el.id;
+    //             else if (el.className) s += '.' + el.className.split(' ').join('.');
+    //             return s;
+    //         });
 
-            // 1. Check specific date element if present
-            const dateElement = card.locator('.date, .review-date, .feedspace-element-date, .feedspace-element-feed-date, .feedspace-element-date-text, .feedspace-wol-date').first();
-            if (await dateElement.count() > 0) {
-                const dText = await dateElement.innerText();
-                // Empty is OK per user request, but literal 'undefined' is not
-                if (dText.toLowerCase().includes('undefined') || dText.toLowerCase().includes('null') || dText.toLowerCase().includes('invalid date')) {
-                    const dateSelector = await dateElement.evaluate(el => {
-                        let s = el.tagName.toLowerCase();
-                        if (el.className) s += '.' + el.className.split(' ').join('.');
-                        return s;
-                    });
+    //         // 1. Check specific date element if present
+    //         const dateElement = card.locator('.date, .review-date, .feedspace-element-date, .feedspace-element-feed-date, .feedspace-element-date-text, .feedspace-wol-date').first();
+    //         if (await dateElement.count() > 0) {
+    //             const dText = await dateElement.innerText();
+    //             // Empty is OK per user request, but literal 'undefined' is not
+    //             if (dText.toLowerCase().includes('undefined') || dText.toLowerCase().includes('null') || dText.toLowerCase().includes('invalid date')) {
+    //                 const dateSelector = await dateElement.evaluate(el => {
+    //                     let s = el.tagName.toLowerCase();
+    //                     if (el.className) s += '.' + el.className.split(' ').join('.');
+    //                     return s;
+    //                 });
 
-                    invalidDateCards.push(i + 1);
-                    this.detailedFailures.push({
-                        type: 'Date Consistency',
-                        card: i + 1,
-                        feedId: feedId,
-                        location: 'Date Element',
-                        snippet: await dateElement.innerHTML(),
-                        description: `Date field contains literal 'undefined' or 'null' (Optional field must be valid or empty).`,
-                        severity: 'High',
-                        selector: dateSelector,
-                        isLimitation: false
-                    });
-                    continue; // Already flagged
-                }
-            }
+    //                 invalidDateCards.push(i + 1);
+    //                 this.detailedFailures.push({
+    //                     type: 'Date Consistency',
+    //                     card: i + 1,
+    //                     feedId: feedId,
+    //                     location: 'Date Element',
+    //                     snippet: await dateElement.innerHTML(),
+    //                     description: `Date field contains literal 'undefined' or 'null' (Optional field must be valid or empty).`,
+    //                     severity: 'High',
+    //                     selector: dateSelector,
+    //                     isLimitation: false
+    //                 });
+    //                 continue; // Already flagged
+    //             }
+    //         }
 
-            // 2. Check general card content for binding errors (leaked undefined/null)
-            const cardHtml = await card.innerHTML();
-            const cardText = await card.innerText();
-            if (cardHtml.toLowerCase().includes('undefined') || cardHtml.toLowerCase().includes('null') || cardText.toLowerCase().includes('invalid date')) {
-                invalidDateCards.push(i + 1);
-                this.detailedFailures.push({
-                    type: 'Date Consistency',
-                    card: i + 1,
-                    feedId: feedId,
-                    location: 'General Card Content',
-                    snippet: cardHtml.substring(0, 150).replace(/</g, '&lt;').replace(/>/g, '&gt;') + '...',
-                    description: `Review card contains leaked 'undefined' or 'null' strings.`,
-                    severity: 'High',
-                    selector: cardSelector,
-                    isLimitation: false
-                });
-            }
-        }
+    //         // 2. Check general card content for binding errors (leaked undefined/null)
+    //         const cardHtml = await card.innerHTML();
+    //         const cardText = await card.innerText();
+    //         if (cardHtml.toLowerCase().includes('undefined') || cardHtml.toLowerCase().includes('null') || cardText.toLowerCase().includes('invalid date')) {
+    //             invalidDateCards.push(i + 1);
+    //             this.detailedFailures.push({
+    //                 type: 'Date Consistency',
+    //                 card: i + 1,
+    //                 feedId: feedId,
+    //                 location: 'General Card Content',
+    //                 snippet: cardHtml.substring(0, 150).replace(/</g, '&lt;').replace(/>/g, '&gt;') + '...',
+    //                 description: `Review card contains leaked 'undefined' or 'null' strings.`,
+    //                 severity: 'High',
+    //                 selector: cardSelector,
+    //                 isLimitation: false
+    //             });
+    //         }
+    //     }
 
-        if (invalidDateCards.length > 0) {
-            this.logAudit(`Date Consistency: Found 'undefined' or 'null' strings in cards #${invalidDateCards.join(', #')}`, 'fail');
-        } else {
-            const configDate = this.config.allow_to_display_feed_date;
-            const dateElements = this.context.locator('.date, .review-date, .feedspace-element-date, .feedspace-element-feed-date, .feedspace-element-date-text, .feedspace-wol-date');
-            const foundCount = await dateElements.count();
+    //     if (invalidDateCards.length > 0) {
+    //         this.logAudit(`Date Consistency: Found 'undefined' or 'null' strings in cards #${invalidDateCards.join(', #')}`, 'fail');
+    //     } else {
+    //         const configDate = this.config.allow_to_display_feed_date;
+    //         const dateElements = this.context.locator('.date, .review-date, .feedspace-element-date, .feedspace-element-feed-date, .feedspace-element-date-text, .feedspace-wol-date');
+    //         const foundCount = await dateElements.count();
 
-            if (configDate == 0 || configDate === '0') {
-                if (foundCount === 0) {
-                    this.logAudit('Date Consistency: Dates are hidden as per configuration.', 'pass');
-                } else {
-                    // Check if they are actually visible AND valid
-                    const firstEl = dateElements.first();
-                    const isVisible = await firstEl.isVisible().catch(() => false);
-                    const hasText = await firstEl.innerText().then(t => t.trim().length > 0).catch(() => false);
+    //         if (configDate == 0 || configDate === '0') {
+    //             if (foundCount === 0) {
+    //                 this.logAudit('Date Consistency: Dates are hidden as per configuration.', 'pass');
+    //             } else {
+    //                 // Check if they are actually visible AND valid
+    //                 const firstEl = dateElements.first();
+    //                 const isVisible = await firstEl.isVisible().catch(() => false);
+    //                 const hasText = await firstEl.innerText().then(t => t.trim().length > 0).catch(() => false);
 
-                    if (!isVisible || !hasText) {
-                        this.logAudit('Date Consistency: Dates are hidden (CSS/Empty) as per configuration.', 'pass');
-                    } else {
-                        this.logAudit('Date Consistency: Dates should be hidden but were found visible.', 'fail');
-                    }
-                }
-            } else if (configDate == 1 || configDate === '1') {
-                if (foundCount > 0 && await dateElements.first().isVisible()) {
-                    this.logAudit('Date Consistency: All review dates are valid and visible.');
-                } else {
-                    this.logAudit('Date Consistency: Dates expected but not found or hidden.', 'fail');
-                }
-            } else {
-                if (foundCount > 0) {
-                    this.logAudit('Date Consistency: All review dates are valid or intentionally empty (optional).');
-                } else {
-                    this.logAudit('Date Consistency: No review dates found in this layout.', 'info');
-                }
-            }
-        }
-    }
+    //                 if (!isVisible || !hasText) {
+    //                     this.logAudit('Date Consistency: Dates are hidden (CSS/Empty) as per configuration.', 'pass');
+    //                 } else {
+    //                     this.logAudit('Date Consistency: Dates should be hidden but were found visible.', 'fail');
+    //                 }
+    //             }
+    //         } else if (configDate == 1 || configDate === '1') {
+    //             if (foundCount > 0 && await dateElements.first().isVisible()) {
+    //                 this.logAudit('Date Consistency: All review dates are valid and visible.');
+    //             } else {
+    //                 this.logAudit('Date Consistency: Dates expected but not found or hidden.', 'fail');
+    //             }
+    //         } else {
+    //             if (foundCount > 0) {
+    //                 this.logAudit('Date Consistency: All review dates are valid or intentionally empty (optional).');
+    //             } else {
+    //                 this.logAudit('Date Consistency: No review dates found in this layout.', 'info');
+    //             }
+    //         }
+    //     }
+    // }
 
     async checkContrast(selector) {
         const element = this.context.locator(selector).first();
@@ -478,93 +478,93 @@ class BaseWidget {
         }
     }
 
-    async validateReadMore() {
-        console.log('Running robust Read More functionality check (Global Search)...');
-        await this.page.waitForTimeout(1000); // Stabilization
+    // async validateReadMore() {
+    //     console.log('Running robust Read More functionality check (Global Search)...');
+    //     await this.page.waitForTimeout(1000); // Stabilization
 
-        // High-confidence generic selectors
-        const readMoreSelectors = [
-            '.feedspace-element-read-more',
-            '.feedspace-read-more-text',
-            '.read-more',
-            'span:has-text("Read more")',
-            'button:has-text("Read more")',
-            'span:has-text("Read More")',
-            'button:has-text("Read More")',
-            'a:has-text("Read more")',
-            '.show-more'
-        ];
+    //     // High-confidence generic selectors
+    //     const readMoreSelectors = [
+    //         '.feedspace-element-read-more',
+    //         '.feedspace-read-more-text',
+    //         '.read-more',
+    //         'span:has-text("Read more")',
+    //         'button:has-text("Read more")',
+    //         'span:has-text("Read More")',
+    //         'button:has-text("Read More")',
+    //         'a:has-text("Read more")',
+    //         '.show-more'
+    //     ];
 
-        let targetTrigger = null;
-        let targetCard = null;
+    //     let targetTrigger = null;
+    //     let targetCard = null;
 
-        // GLOBAL SEARCH: Look for ANY card with a visible Read More button
-        for (const selector of readMoreSelectors) {
-            const triggers = this.context.locator(selector);
-            const count = await triggers.count();
+    //     // GLOBAL SEARCH: Look for ANY card with a visible Read More button
+    //     for (const selector of readMoreSelectors) {
+    //         const triggers = this.context.locator(selector);
+    //         const count = await triggers.count();
 
-            for (let i = 0; i < count; i++) {
-                const el = triggers.nth(i);
-                const isVisible = await el.isVisible().catch(() => false);
-                const isAttached = await el.count().catch(() => 0) > 0;
+    //         for (let i = 0; i < count; i++) {
+    //             const el = triggers.nth(i);
+    //             const isVisible = await el.isVisible().catch(() => false);
+    //             const isAttached = await el.count().catch(() => 0) > 0;
 
-                if (isVisible || isAttached) {
-                    // Find the parent card for this trigger
-                    targetCard = el.locator('xpath=./ancestor::*[contains(@class, "feedspace-review-item") or contains(@class, "feedspace-element-post-box") or contains(@class, "feedspace-element-feed-box") or contains(@class, "feedspace-element-marquee-item")][1]').first();
+    //             if (isVisible || isAttached) {
+    //                 // Find the parent card for this trigger
+    //                 targetCard = el.locator('xpath=./ancestor::*[contains(@class, "feedspace-review-item") or contains(@class, "feedspace-element-post-box") or contains(@class, "feedspace-element-feed-box") or contains(@class, "feedspace-element-marquee-item")][1]').first();
 
-                    if (isVisible) {
-                        targetTrigger = el;
-                        break;
-                    }
-                }
-            }
-            if (targetTrigger) break;
-        }
+    //                 if (isVisible) {
+    //                     targetTrigger = el;
+    //                     break;
+    //                 }
+    //             }
+    //         }
+    //         if (targetTrigger) break;
+    //     }
 
-        if (targetTrigger && targetCard) {
-            this.logAudit('[Read More] Read More: Found a visible expansion trigger.');
-            try {
-                const initialHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => 0);
-                await targetTrigger.scrollIntoViewIfNeeded().catch(() => { });
-                await targetTrigger.click({ force: true });
-                await this.page.waitForTimeout(1200);
+    //     if (targetTrigger && targetCard) {
+    //         this.logAudit('[Read More] Read More: Found a visible expansion trigger.');
+    //         try {
+    //             const initialHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => 0);
+    //             await targetTrigger.scrollIntoViewIfNeeded().catch(() => { });
+    //             await targetTrigger.click({ force: true });
+    //             await this.page.waitForTimeout(1200);
 
-                const expandedHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => 0);
+    //             const expandedHeight = await targetCard.evaluate(el => el.offsetHeight).catch(() => 0);
 
-                // Check for "Read Less" or content expansion
-                const readLessSelector = '.feedspace-read-less-text, .feedspace-element-read-less-text-span, span:has-text("Read less"), button:has-text("Read less"), span:has-text("Read Less"), button:has-text("Read Less")';
-                const hasReadLess = await targetCard.locator(readLessSelector).count() > 0;
+    //             // Check for "Read Less" or content expansion
+    //             const readLessSelector = '.feedspace-read-less-text, .feedspace-element-read-less-text-span, span:has-text("Read less"), button:has-text("Read less"), span:has-text("Read Less"), button:has-text("Read Less")';
+    //             const hasReadLess = await targetCard.locator(readLessSelector).count() > 0;
 
-                if (hasReadLess || expandedHeight > initialHeight + 5) {
-                    this.logAudit(`[Read More] Read More: Expansion verified. New height: ${expandedHeight}px (+${expandedHeight - initialHeight}px).`);
+    //             if (hasReadLess || expandedHeight > initialHeight + 5) {
+    //                 this.logAudit(`[Read More] Read More: Expansion verified. New height: ${expandedHeight}px (+${expandedHeight - initialHeight}px).`);
 
-                    // Try to collapse back if possible
-                    const collapseBtn = targetCard.locator(readLessSelector).first();
-                    if (await collapseBtn.isVisible()) {
-                        await collapseBtn.click({ force: true });
-                        await this.page.waitForTimeout(1000);
-                        this.logAudit('[Read More] Read More / Less: Full cycle validated successfully.');
-                    }
-                } else {
-                    if (!(await targetTrigger.isVisible())) {
-                        this.logAudit('[Read More] Read More: Trigger disappeared after click, assuming textual expansion successful.');
-                    } else {
-                        this.logAudit('[Read More] Read More: Clicked trigger but did not detect expansion or "Read Less" state.', 'info');
-                    }
-                }
-            } catch (e) {
-                this.logAudit(`[Read More] Read More: Interaction failed - ${e.message.split('\n')[0]}`, 'info');
-            }
-        } else {
-            // Fallback: Check if "Read More" text exists in the DOM but is not visible/interactable
-            const domTextCheck = this.context.locator('text=/Read [mM]ore/');
-            if (await domTextCheck.count() > 0) {
-                this.logAudit('[Read More] Read More: Text is truncated but interactive "Read More" button is missing or non-functional.', 'fail');
-            } else {
-                this.logAudit('[Read More] Read More: No "Read More" button found (all text likely visible).', 'info');
-            }
-        }
-    }
+    //                 // Try to collapse back if possible
+    //                 const collapseBtn = targetCard.locator(readLessSelector).first();
+    //                 if (await collapseBtn.isVisible()) {
+    //                     await collapseBtn.click({ force: true });
+    //                     await this.page.waitForTimeout(1000);
+    //                     this.logAudit('[Read More] Read More / Less: Full cycle validated successfully.');
+    //                 }
+    //             } else {
+    //                 if (!(await targetTrigger.isVisible())) {
+    //                     this.logAudit('[Read More] Read More: Trigger disappeared after click, assuming textual expansion successful.');
+    //                 } else {
+    //                     this.logAudit('[Read More] Read More: Clicked trigger but did not detect expansion or "Read Less" state.', 'info');
+    //                 }
+    //             }
+    //         } catch (e) {
+    //             this.logAudit(`[Read More] Read More: Interaction failed - ${e.message.split('\n')[0]}`, 'info');
+    //         }
+    //     } else {
+    //         // Fallback: Check if "Read More" text exists in the DOM but is not visible/interactable
+    //         const domTextCheck = this.context.locator('text=/Read [mM]ore/');
+    //         if (await domTextCheck.count() > 0) {
+    //             this.logAudit('[Read More] Read More: Text is truncated but interactive "Read More" button is missing or non-functional.', 'fail');
+    //         } else {
+    //             this.logAudit('[Read More] Read More: No "Read More" button found (all text likely visible).', 'info');
+    //         }
+    //     }
+    // }
 
     async validateResponsiveness(device = 'Mobile') {
         console.log(`Running Responsiveness check for ${device}...`);
@@ -771,9 +771,9 @@ class BaseWidget {
 
             // --- PART 1: Standard Base Audits ---
             await this.validateVisibility();
-            await this.validateBranding();
-            await this.validateCTA();
-            await this.validateDateConsistency();
+            //await this.validateBranding();
+            //await this.validateCTA();
+            //await this.validateDateConsistency();
             await this.validateLayoutIntegrity();
             await this.validateAlignment();
             await this.runAccessibilityAudit();
@@ -790,7 +790,7 @@ class BaseWidget {
             // --- PART 3: Post-Interaction Integrity Checks (Run on ALL loaded content) ---
             await this.validateTextReadability();
             await this.validateMediaIntegrity();
-            await this.validateReadMore();
+            //  await this.validateReadMore();
             await this.validateCardConsistency();
 
             // --- PART 4: Finalize Coverage ---
