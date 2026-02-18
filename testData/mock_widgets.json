@@ -1,13 +1,13 @@
 {
     "data": [
         {
-            "url": "https://www.feedspace.io/widget/e7831239-7c02-4e86-a481-ae5d313542a9?info=1",
-            "type": "FLOATING_TOAST",
+            "url": "https://www.feedspace.io/widget/ecbce9f9-5ff3-4a1b-9a0b-9c509397a04d?info=1",
+            "type": "carousel_slider",
             "configurations": {
                 "ratings": "5",
                 "custom_css": null,
                 "is_autoplay": "1",
-                "shadow_size": "4",
+                "shadow_size": "2",
                 "border_color": "#000000",
                 "shadow_color": "#000000",
                 "shadow_style": "blurred",
@@ -16,7 +16,7 @@
                 "autoplay_speed": "3",
                 "hide_on_mobile": "0",
                 "is_show_border": "0",
-                "is_show_shadow": "1",
+                "is_show_shadow": "0",
                 "allow_dark_mode": "0",
                 "is_show_ratings": "1",
                 "widget_position": "left",
@@ -38,15 +38,14 @@
                 "number_of_review_text": null,
                 "is_show_arrows_buttons": "1",
                 "allow_social_redirection": "1",
-                "allow_to_remove_branding": "0",
-                "cta_enabled": "1",
-                "review_selection_sort_by": null,
+                "allow_to_remove_branding": "1",
                 "star_rating_border_color": "#eab308",
                 "is_show_full_review_popup": "1",
                 "allow_to_display_feed_date": "1",
                 "horizontal_marquee_direction": "alter",
                 "allow_cross_scrolling_animation": "1",
-                "allow_left_right_scrolling_animation": "1"
+                "allow_left_right_scrolling_animation": "1",
+                "cta_enabled": "1"
             }
         }
     ]

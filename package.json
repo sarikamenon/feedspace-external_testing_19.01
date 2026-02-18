@@ -4,25 +4,24 @@
   "description": "BDD Automation Framework using Playwright, Cucumber, and POM",
   "main": "index.js",
   "scripts": {
-    "test": "cucumber-js",
-    "report": "node report-generator.js"
+    "test": "node runValidation.js"
   },
   "keywords": [
     "playwright",
-    "cucumber",
-    "bdd",
+    "ai",
     "automation",
     "testing"
   ],
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "@cucumber/cucumber": "^10.0.0",
     "@playwright/test": "^1.40.0",
     "prettier": "^3.0.0"
   },
   "dependencies": {
     "@axe-core/playwright": "^4.11.0",
+    "@google/generative-ai": "^0.24.1",
+    "dotenv": "^17.3.1",
     "xlsx": "^0.18.5"
   }
 }
